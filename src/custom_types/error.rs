@@ -10,4 +10,7 @@ pub enum FetchError {
 
     #[error("Unexpected API response: {0}")]
     UnexpectedResponse(String),
+
+    #[error("Missing authentication token")]
+    MissingToken,
 }

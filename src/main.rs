@@ -7,6 +7,6 @@ pub mod protocols;
 
 #[tokio::main]
 async fn main() {
-    let controller = FetchController::new();
+    let mut controller = FetchController::new();
     controller.run().await;
 }

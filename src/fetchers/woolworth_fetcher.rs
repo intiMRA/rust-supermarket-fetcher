@@ -1,21 +1,77 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde_json::Value;
 
 use crate::custom_types::error::FetchError;
+use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
+use crate::models::category::{Category, flatten_category_paths};
+use crate::models::store::Store;
 use crate::models::super_market_item::SuperMarketItem;
+use crate::models::token::Token;
 use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
+
+// -----------------------------------------------------------------------------
+// Category Parsing Helpers
+// -----------------------------------------------------------------------------
+
+fn to_slug(name: &str) -> String {
+    name.to_lowercase()
+        .replace(" & ", "-")
+        .replace(", ", "-")
+        .replace(' ', "-")
+}
+
+fn parse_shelves(shelves: &Value) -> Vec<Category> {
+    let mut children = Vec::new();
+    if let Some(shelf_arr) = shelves.as_array() {
+        for shelf in shelf_arr {
+            if let Some(url) = shelf["url"].as_str() {
+                children.push(Category {
+                    name: url.to_string(),
+                    children: Vec::new(),
+                });
+            }
+        }
+    }
+    children
+}
+
+fn parse_aisles(facets: &Value) -> Vec<Category> {
+    let mut children = Vec::new();
+    if let Some(facet_arr) = facets.as_array() {
+        for facet in facet_arr {
+            let shelves = parse_shelves(&facet["shelfResponses"]);
+            if let Some(name) = facet["name"].as_str() {
+                children.push(Category {
+                    name: to_slug(name),
+                    children: shelves,
+                });
+            }
+        }
+    }
+    children
+}
+
+// -----------------------------------------------------------------------------
+// Struct Definition
+// -----------------------------------------------------------------------------
 
 pub struct WoolworthFetcher {
     client: Client,
+    categories: Option<Vec<Category>>,
 }
+
+// -----------------------------------------------------------------------------
+// Constructor & HTTP Helpers
+// -----------------------------------------------------------------------------
 
 impl WoolworthFetcher {
     pub fn new() -> Self {
         Self {
             client: Client::new(),
+            categories: None,
         }
     }
 
@@ -45,92 +101,78 @@ impl WoolworthFetcher {
     }
 }
 
-impl Default for WoolworthFetcher {
-    fn default() -> Self {
-        Self::new()
+// -----------------------------------------------------------------------------
+// Category Helpers
+// -----------------------------------------------------------------------------
+
+impl WoolworthFetcher {
+    async fn get_category_trace(
+        &mut self,
+        category_name: &str,
+        store_id: Option<&str>,
+    ) -> Result<Vec<String>, FetchError> {
+        let categories = self.get_categories(store_id).await?;
+        for category in &categories {
+            let trace = category.get_trace(category_name);
+            if !trace.is_empty() {
+                return Ok(trace);
+            }
+        }
+        Ok(Vec::new())
     }
 }
 
-#[async_trait]
-impl SuperMarketFetcherProtocol for WoolworthFetcher {
-    async fn get_auth(&self) -> Result<Option<String>, FetchError> {
-        Ok(None)
-    }
+// -----------------------------------------------------------------------------
+// Internal Fetch Methods
+// -----------------------------------------------------------------------------
 
-    async fn get_items(&self) -> Result<Vec<SuperMarketItem>, FetchError> {
-        let categories = self.get_categories(true).await?;
-        let mut items: Vec<SuperMarketItem> = Vec::new();
-        for category in categories {
-            let category_items = self.get_items_for_category(&category).await?;
-            items.extend(category_items);
-        }
-        Ok(items)
-    }
+impl WoolworthFetcher {
+    async fn fetch_items_for_category_path(
+        &self,
+        category_path: &[String],
+    ) -> Result<Vec<SuperMarketItem>, FetchError> {
+        let category_display = category_path.join(" > ");
+        println!("[Woolworths] Fetching items for category: {}...", category_display);
 
-    async fn get_categories(&self, top_level_only: bool) -> Result<Vec<String>, FetchError> {
         let headers = self.build_headers();
-        let response = self
-            .client
-            .get("https://www.woolworths.co.nz/api/v1/shell")
-            .headers(headers)
-            .send()
-            .await?;
 
-        let json: Value = response.json().await?;
-
-        let mut categories = Vec::new();
-        if let Some(specials) = json["specials"].as_array() {
-            for special in specials {
-                if let Some(url) = special["url"].as_str() {
-                    categories.push(url.to_string());
-                }
-                if top_level_only {
-                    continue;
-                }
-                if let Some(facets) = special["dasFacets"].as_array() {
-                    for facet in facets {
-                        if let Some(shelves) = facet["shelfResponses"].as_array() {
-                            for shelf in shelves {
-                                if let Some(url) = shelf["url"].as_str() {
-                                    categories.push(url.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+        // Build dasFilter parameters based on path depth
+        let mut filters = String::new();
+        let filter_types = ["Department", "Aisle", "Shelf"];
+        for (i, cat) in category_path.iter().enumerate() {
+            if i < filter_types.len() {
+                filters.push_str(&format!(
+                    "&dasFilter={}%3B%3B{}%3Bfalse",
+                    filter_types[i], cat
+                ));
             }
         }
 
-        Ok(categories)
-    }
-
-    async fn get_items_for_category(
-        &self,
-        category: &str,
-    ) -> Result<Vec<SuperMarketItem>, FetchError> {
-        let mut items: Vec<SuperMarketItem> = Vec::new();
-        let headers = self.build_headers();
-
-        println!("fetching {}...", category);
         let mut page = 1;
+        let mut items: Vec<SuperMarketItem> = Vec::new();
+
         loop {
             let fetch_url = format!(
-                "https://www.woolworths.co.nz/api/v1/products?dasFilter=Department%3B%3B{}%3Btrue&target=browse&inStockProductsOnly=false&size=120&page={}",
-                category, page
+                "https://www.woolworths.co.nz/api/v1/products?{}&target=browse&inStockProductsOnly=false&size=120&page={}",
+                filters.trim_start_matches('&'),
+                page
             );
+
             let response = self
                 .client
                 .get(&fetch_url)
                 .headers(headers.clone())
                 .send()
-                .await?;
+                .await
+                .map_err(FetchError::Request)?;
 
             if !response.status().is_success() {
                 eprintln!("Failed to fetch: {}", response.status());
                 break;
             }
 
-            let json: Value = response.json().await?;
+            let json: Value = response.json().await.map_err(FetchError::Request)?;
+
             if let Some(json_items) = json["products"]["items"].as_array()
                 && !json_items.is_empty()
             {
@@ -141,7 +183,10 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
                         && let Some(price) = json_item["price"]["salePrice"].as_f64()
                         && let Some(brand_name) = json_item["brand"].as_str()
                     {
-                        // TODO: parse size
+                        let size = json_item["size"]["volumeSize"]
+                            .as_str()
+                            .and_then(SizeUnit::parse);
+
                         items.push(SuperMarketItem {
                             id: id.to_string(),
                             name: name.to_string(),
@@ -149,8 +194,8 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
                             image_url: image_url.to_string(),
                             price,
                             brand_name: brand_name.to_string(),
-                            size: None,
-                            category: category.to_string(),
+                            size,
+                            category: category_display.clone(),
                         });
                     }
                 }
@@ -159,6 +204,103 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
             }
             page += 1;
         }
+
+        println!("[Woolworths] Fetched {} items for category: {}", items.len(), category_display);
         Ok(items)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Default Implementation
+// -----------------------------------------------------------------------------
+
+impl Default for WoolworthFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Protocol Implementation
+// -----------------------------------------------------------------------------
+
+#[async_trait]
+impl SuperMarketFetcherProtocol for WoolworthFetcher {
+    // --- Authentication ---
+
+    async fn get_auth(&self) -> Result<Option<Token>, FetchError> {
+        Ok(None)
+    }
+
+    // --- Stores ---
+
+    async fn get_stores(&self) -> Result<Vec<Store>, FetchError> {
+        Ok(Vec::new())
+    }
+
+    // --- Categories ---
+
+    async fn get_categories(&mut self, _store_id: Option<&str>) -> Result<Vec<Category>, FetchError> {
+        if let Some(categories) = &self.categories {
+            return Ok(categories.clone());
+        }
+
+        println!("[Woolworths] Fetching categories...");
+        let headers = self.build_headers();
+        let response = self
+            .client
+            .get("https://www.woolworths.co.nz/api/v1/shell")
+            .headers(headers)
+            .send()
+            .await
+            .map_err(FetchError::Request)?;
+
+        let json: Value = response.json().await.map_err(FetchError::Request)?;
+
+        let mut categories = Vec::new();
+        if let Some(specials) = json["specials"].as_array() {
+            for special in specials {
+                if let Some(url) = special["url"].as_str() {
+                    let aisles = parse_aisles(&special["dasFacets"]);
+                    categories.push(Category {
+                        name: url.to_string(),
+                        children: aisles,
+                    });
+                }
+            }
+        }
+
+        println!("[Woolworths] Fetched {} top-level categories", categories.len());
+        self.categories = Some(categories.clone());
+        Ok(categories)
+    }
+
+    // --- Items ---
+
+    async fn get_items(&mut self, _store_id: Option<&str>) -> Result<Vec<SuperMarketItem>, FetchError> {
+        println!("[Woolworths] Fetching all items...");
+
+        let categories = self.get_categories(None).await?;
+        let category_paths = flatten_category_paths(&categories);
+
+        println!("[Woolworths] Found {} categories to fetch", category_paths.len());
+
+        let mut items: Vec<SuperMarketItem> = Vec::new();
+        for category_path in &category_paths {
+            let category_items = self.fetch_items_for_category_path(category_path).await?;
+            items.extend(category_items);
+        }
+
+        println!("[Woolworths] Fetched {} total items", items.len());
+        Ok(items)
+    }
+
+    async fn get_items_for_category(
+        &mut self,
+        _store_id: Option<&str>,
+        category: &str,
+    ) -> Result<Vec<SuperMarketItem>, FetchError> {
+        let category_path = self.get_category_trace(category, None).await?;
+        self.fetch_items_for_category_path(&category_path).await
     }
 }
