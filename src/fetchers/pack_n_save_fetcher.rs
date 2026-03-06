@@ -1,17 +1,15 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use reqwest::Client;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde_json::Value;
 
 use crate::custom_types::error::FetchError;
-use crate::custom_types::size_unit_types::SizeUnit;
-use crate::custom_types::supermarket_types::Supermarket;
 use crate::models::category::{Category, find_trace, flatten_category_paths};
-use crate::protocols::logger_protocol::LoggerProtocol;
 use crate::models::store::{Store, StoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
+use crate::protocols::food_stuff_common_protocol::FoodStuffCommonsProtocol;
+use crate::protocols::logger_protocol::LoggerProtocol;
 use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
 
 const DEFAULT_STORE_ID: &str = "21ecaaed-0749-4492-985e-4bb7ba43d59c";
@@ -25,52 +23,22 @@ pub struct PackNSaveFetcher {
     token: Option<Token>,
     categories: Option<Vec<Category>>,
     logger: Box<dyn LoggerProtocol>,
+    commons: Box<dyn FoodStuffCommonsProtocol>,
 }
 
 // -----------------------------------------------------------------------------
-// Constructor & HTTP Helpers
+// Constructor
 // -----------------------------------------------------------------------------
 
 impl PackNSaveFetcher {
-    pub fn new(logger: Box<dyn LoggerProtocol>) -> Self {
+    pub fn new(logger: Box<dyn LoggerProtocol>, commons: Box<dyn FoodStuffCommonsProtocol>) -> Self {
         Self {
             client: Client::new(),
             token: None,
             categories: None,
             logger,
+            commons,
         }
-    }
-
-    fn build_headers(&self, token: Option<Token>) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        if let Some(token) = token {
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", token.token)).unwrap(),
-            );
-        }
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_static("application/json, text/plain, */*"),
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            "accept-language",
-            HeaderValue::from_static("en-GB,en-US;q=0.9,en;q=0.8"),
-        );
-        headers.insert("cache-control", HeaderValue::from_static("no-cache"));
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-            ),
-        );
-        headers.insert(
-            REFERER,
-            HeaderValue::from_static("https://www.newworld.co.nz"),
-        );
-        headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
-        headers
     }
 }
 
@@ -79,14 +47,6 @@ impl PackNSaveFetcher {
 // -----------------------------------------------------------------------------
 
 impl PackNSaveFetcher {
-    fn build_category_filter(store_id: &str, category_path: &[String]) -> String {
-        let mut filter = format!("stores:{}", store_id);
-        for (i, category) in category_path.iter().enumerate() {
-            filter.push_str(&format!(" AND category{}SI:\"{}\"", i, category));
-        }
-        filter
-    }
-
     async fn get_category_trace(
         &mut self,
         category_name: &str,
@@ -111,8 +71,8 @@ impl PackNSaveFetcher {
         self.logger.fetching_category(&category_display);
 
         let token = self.get_auth().await?;
-        let headers = self.build_headers(token);
-        let filter = Self::build_category_filter(store_id, category_path);
+        let headers = self.commons.build_headers(token);
+        let filter = self.commons.build_category_filter(store_id, category_path);
 
         let mut page = 0;
         let mut items: Vec<SuperMarketItem> = Vec::new();
@@ -121,8 +81,8 @@ impl PackNSaveFetcher {
             let body = serde_json::json!({
                 "algoliaQuery": {
                     "attributesToHighlight": [],
-                    "attributesToRetrieve": ["productID","Type","sponsored","category0SI","category1SI","category2SI"],
-                    "facets": ["brand","onPromotion","productFacets","tobacco"],
+                    "attributesToRetrieve": ["productID", "Type", "sponsored", "category0SI", "category1SI", "category2SI"],
+                    "facets": ["brand", "onPromotion", "productFacets", "tobacco"],
                     "filters": filter,
                     "highlightPostTag": "__/ais-highlight__",
                     "highlightPreTag": "__ais-highlight__",
@@ -160,39 +120,13 @@ impl PackNSaveFetcher {
             }
 
             let json: Value = response.json().await.map_err(FetchError::Request)?;
-
-            if let Some(products) = json["products"].as_array()
-                && !products.is_empty()
-            {
-                for product in products {
-                    if let Some(id) = product["productId"].as_str()
-                        && let Some(name) = product["name"].as_str()
-                        && let Some(price_cents) = product["singlePrice"]["price"].as_i64()
-                    {
-                        let brand_name = product["brand"].as_str().unwrap_or("").to_string();
-                        let size = product["displayName"].as_str().and_then(SizeUnit::parse);
-                        let image_id = id.split('-').next().unwrap_or(id);
-                        let image_url = format!(
-                            "https://a.fsimg.co.nz/product/retail/fan/image/400x400/{}.png",
-                            image_id
-                        );
-
-                        items.push(SuperMarketItem {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                            supermarket: Supermarket::PakNSave,
-                            image_url,
-                            price: price_cents as f64 / 100.0,
-                            brand_name,
-                            size,
-                            category: category_display.clone(),
-                        });
-                    }
-                }
-            } else {
+            let parsed_products = self.commons.parse_products(json, category_display.clone());
+            if parsed_products.is_empty() {
                 break;
+            } else {
+                items.extend(parsed_products);
+                page += 1;
             }
-            page += 1;
         }
 
         self.logger.fetched_category(items.len(), &category_display);
@@ -215,7 +149,7 @@ impl SuperMarketFetcherProtocol for PackNSaveFetcher {
             }
         }
 
-        let headers = self.build_headers(None);
+        let headers = self.commons.build_headers(None);
         let response = self
             .client
             .post("https://www.paknsave.co.nz/api/user/get-current-user")
@@ -226,16 +160,9 @@ impl SuperMarketFetcherProtocol for PackNSaveFetcher {
 
         let json: Value = response.json().await.map_err(FetchError::Request)?;
 
-        if let Some(token) = json["access_token"].as_str()
-            && let Some(expiry_time_string) = json["expires_time"].as_str()
-            && let Ok(expiry_time) = DateTime::parse_from_rfc3339(expiry_time_string)
-        {
-            Ok(Some(Token {
-                token: token.to_string(),
-                expiry_time: expiry_time.with_timezone(&Utc),
-            }))
-        } else {
-            Err(FetchError::MissingToken)
+        match self.commons.parse_token(&json) {
+            Some(token) => Ok(Some(token)),
+            None => Err(FetchError::MissingToken),
         }
     }
 
@@ -245,7 +172,7 @@ impl SuperMarketFetcherProtocol for PackNSaveFetcher {
         self.logger.fetching("stores");
 
         let token = self.get_auth().await?;
-        let headers = self.build_headers(token);
+        let headers = self.commons.build_headers(token);
 
         let response = self
             .client
@@ -271,7 +198,7 @@ impl SuperMarketFetcherProtocol for PackNSaveFetcher {
         self.logger.fetching("categories");
         let store_id = store_id.unwrap_or(DEFAULT_STORE_ID);
         let token = self.get_auth().await?;
-        let headers = self.build_headers(token);
+        let headers = self.commons.build_headers(token);
 
         let response = self
             .client
