@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::{Category, flatten_category_paths};
+use crate::models::category::{Category, find_trace, flatten_category_paths};
 use crate::protocols::logger_protocol::LoggerProtocol;
 use crate::models::store::Store;
 use crate::models::super_market_item::SuperMarketItem;
@@ -115,13 +115,7 @@ impl WoolworthFetcher {
         store_id: Option<&str>,
     ) -> Result<Vec<String>, FetchError> {
         let categories = self.get_categories(store_id).await?;
-        for category in &categories {
-            let trace = category.get_trace(category_name);
-            if !trace.is_empty() {
-                return Ok(trace);
-            }
-        }
-        Ok(Vec::new())
+        Ok(find_trace(&categories, category_name))
     }
 }
 

@@ -50,3 +50,13 @@ pub fn flatten_categories(categories: &[Category]) -> Vec<String> {
 pub fn flatten_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
     categories.iter().flat_map(|c| c.flatten_paths(&[])).collect()
 }
+
+pub fn find_trace(categories: &[Category], name: &str) -> Vec<String> {
+    for category in categories {
+        let trace = category.get_trace(name);
+        if !trace.is_empty() {
+            return trace;
+        }
+    }
+    Vec::new()
+}

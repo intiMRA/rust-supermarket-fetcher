@@ -14,13 +14,13 @@ use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
 use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
 
-const DEFAULT_STORE_ID: &str = "60928d93-06fa-4d8f-92a6-8c359e7e846d";
+const DEFAULT_STORE_ID: &str = "21ecaaed-0749-4492-985e-4bb7ba43d59c";
 
 // -----------------------------------------------------------------------------
 // Struct Definition
 // -----------------------------------------------------------------------------
 
-pub struct NewWorldFetcher {
+pub struct PackNSaveFetcher {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
@@ -31,7 +31,7 @@ pub struct NewWorldFetcher {
 // Constructor & HTTP Helpers
 // -----------------------------------------------------------------------------
 
-impl NewWorldFetcher {
+impl PackNSaveFetcher {
     pub fn new(logger: Box<dyn LoggerProtocol>) -> Self {
         Self {
             client: Client::new(),
@@ -78,11 +78,11 @@ impl NewWorldFetcher {
 // Category Helpers
 // -----------------------------------------------------------------------------
 
-impl NewWorldFetcher {
+impl PackNSaveFetcher {
     fn build_category_filter(store_id: &str, category_path: &[String]) -> String {
         let mut filter = format!("stores:{}", store_id);
         for (i, category) in category_path.iter().enumerate() {
-            filter.push_str(&format!(" AND category{}NI:\"{}\"", i, category));
+            filter.push_str(&format!(" AND category{}SI:\"{}\"", i, category));
         }
         filter
     }
@@ -101,7 +101,7 @@ impl NewWorldFetcher {
 // Internal Fetch Methods
 // -----------------------------------------------------------------------------
 
-impl NewWorldFetcher {
+impl PackNSaveFetcher {
     async fn fetch_items_for_category_path(
         &self,
         store_id: &str,
@@ -121,8 +121,8 @@ impl NewWorldFetcher {
             let body = serde_json::json!({
                 "algoliaQuery": {
                     "attributesToHighlight": [],
-                    "attributesToRetrieve": ["productID", "Type", "sponsored", "category0NI", "category1NI", "category2NI", "barCode"],
-                    "facets": ["brand", "category1NI", "onPromotion", "productFacets", "tobacco", "code"],
+                    "attributesToRetrieve": ["productID","Type","sponsored","category0SI","category1SI","category2SI"],
+                    "facets": ["brand","onPromotion","productFacets","tobacco"],
                     "filters": filter,
                     "highlightPostTag": "__/ais-highlight__",
                     "highlightPreTag": "__ais-highlight__",
@@ -135,7 +135,7 @@ impl NewWorldFetcher {
                 "storeId": store_id,
                 "hitsPerPage": 50,
                 "page": page,
-                "sortOrder": "NI_POPULARITY_ASC",
+                "sortOrder": "SI_POPULARITY_ASC",
                 "tobaccoQuery": false,
                 "precisionMedia": {
                     "adDomain": "CATEGORY_PAGE",
@@ -147,7 +147,7 @@ impl NewWorldFetcher {
 
             let response = self
                 .client
-                .post("https://api-prod.newworld.co.nz/v1/edge/search/paginated/products")
+                .post("https://api-prod.paknsave.co.nz/v1/edge/search/paginated/products")
                 .headers(headers.clone())
                 .json(&body)
                 .send()
@@ -180,7 +180,7 @@ impl NewWorldFetcher {
                         items.push(SuperMarketItem {
                             id: id.to_string(),
                             name: name.to_string(),
-                            supermarket: Supermarket::NewWorld,
+                            supermarket: Supermarket::PakNSave,
                             image_url,
                             price: price_cents as f64 / 100.0,
                             brand_name,
@@ -205,7 +205,7 @@ impl NewWorldFetcher {
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherProtocol for NewWorldFetcher {
+impl SuperMarketFetcherProtocol for PackNSaveFetcher {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {
@@ -218,7 +218,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
         let headers = self.build_headers(None);
         let response = self
             .client
-            .post("https://www.newworld.co.nz/api/user/get-current-user")
+            .post("https://www.paknsave.co.nz/api/user/get-current-user")
             .headers(headers)
             .send()
             .await
@@ -249,7 +249,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
 
         let response = self
             .client
-            .get("https://api-prod.newworld.co.nz/v1/edge/store")
+            .get("https://api-prod.paknsave.co.nz/v1/edge/store")
             .headers(headers)
             .send()
             .await
@@ -276,7 +276,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
         let response = self
             .client
             .get(format!(
-                "https://api-prod.newworld.co.nz/v1/edge/store/{}/categories",
+                "https://api-prod.paknsave.co.nz/v1/edge/store/{}/categories",
                 store_id
             ))
             .headers(headers)
