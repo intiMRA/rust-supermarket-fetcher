@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
-use crate::logger::Logger;
 use crate::models::category::{Category, flatten_category_paths};
+use crate::protocols::logger_protocol::LoggerProtocol;
 use crate::models::store::{Store, StoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
@@ -24,7 +24,7 @@ pub struct NewWorldFetcher {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
-    logger: Logger,
+    logger: Box<dyn LoggerProtocol>,
 }
 
 // -----------------------------------------------------------------------------
@@ -32,7 +32,7 @@ pub struct NewWorldFetcher {
 // -----------------------------------------------------------------------------
 
 impl NewWorldFetcher {
-    pub fn new(logger: Logger) -> Self {
+    pub fn new(logger: Box<dyn LoggerProtocol>) -> Self {
         Self {
             client: Client::new(),
             token: None,

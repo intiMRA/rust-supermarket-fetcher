@@ -11,8 +11,8 @@ pub struct FetchController {
 impl FetchController {
     pub fn new() -> Self {
         Self {
-            woolworth_fetcher: Box::new(WoolworthFetcher::new(Logger::new("Woolworths"))),
-            new_world_fetcher: Box::new(NewWorldFetcher::new(Logger::new("NewWorld"))),
+            woolworth_fetcher: Box::new(WoolworthFetcher::new(Box::new(Logger::new("Woolworths")))),
+            new_world_fetcher: Box::new(NewWorldFetcher::new(Box::new(Logger::new("NewWorld")))),
         }
     }
 
