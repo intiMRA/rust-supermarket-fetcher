@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
+use crate::logger::Logger;
 use crate::models::category::{Category, flatten_category_paths};
 use crate::models::store::Store;
 use crate::models::super_market_item::SuperMarketItem;
@@ -61,6 +62,7 @@ fn parse_aisles(facets: &Value) -> Vec<Category> {
 pub struct WoolworthFetcher {
     client: Client,
     categories: Option<Vec<Category>>,
+    logger: Logger,
 }
 
 // -----------------------------------------------------------------------------
@@ -68,10 +70,11 @@ pub struct WoolworthFetcher {
 // -----------------------------------------------------------------------------
 
 impl WoolworthFetcher {
-    pub fn new() -> Self {
+    pub fn new(logger: Logger) -> Self {
         Self {
             client: Client::new(),
             categories: None,
+            logger,
         }
     }
 
@@ -132,7 +135,7 @@ impl WoolworthFetcher {
         category_path: &[String],
     ) -> Result<Vec<SuperMarketItem>, FetchError> {
         let category_display = category_path.join(" > ");
-        println!("[Woolworths] Fetching items for category: {}...", category_display);
+        self.logger.fetching_category(&category_display);
 
         let headers = self.build_headers();
 
@@ -167,7 +170,7 @@ impl WoolworthFetcher {
                 .map_err(FetchError::Request)?;
 
             if !response.status().is_success() {
-                eprintln!("Failed to fetch: {}", response.status());
+                self.logger.error(&format!("Failed to fetch: {}", response.status()));
                 break;
             }
 
@@ -205,18 +208,8 @@ impl WoolworthFetcher {
             page += 1;
         }
 
-        println!("[Woolworths] Fetched {} items for category: {}", items.len(), category_display);
+        self.logger.fetched_category(items.len(), &category_display);
         Ok(items)
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Default Implementation
-// -----------------------------------------------------------------------------
-
-impl Default for WoolworthFetcher {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -245,7 +238,7 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
             return Ok(categories.clone());
         }
 
-        println!("[Woolworths] Fetching categories...");
+        self.logger.fetching("categories");
         let headers = self.build_headers();
         let response = self
             .client
@@ -270,7 +263,7 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
             }
         }
 
-        println!("[Woolworths] Fetched {} top-level categories", categories.len());
+        self.logger.fetched(categories.len(), "top-level categories");
         self.categories = Some(categories.clone());
         Ok(categories)
     }
@@ -278,12 +271,12 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
     // --- Items ---
 
     async fn get_items(&mut self, _store_id: Option<&str>) -> Result<Vec<SuperMarketItem>, FetchError> {
-        println!("[Woolworths] Fetching all items...");
+        self.logger.fetching("all items");
 
         let categories = self.get_categories(None).await?;
         let category_paths = flatten_category_paths(&categories);
 
-        println!("[Woolworths] Found {} categories to fetch", category_paths.len());
+        self.logger.found(category_paths.len(), "categories to fetch");
 
         let mut items: Vec<SuperMarketItem> = Vec::new();
         for category_path in &category_paths {
@@ -291,7 +284,7 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
             items.extend(category_items);
         }
 
-        println!("[Woolworths] Fetched {} total items", items.len());
+        self.logger.fetched(items.len(), "total items");
         Ok(items)
     }
 

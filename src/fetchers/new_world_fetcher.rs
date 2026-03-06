@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
+use crate::logger::Logger;
 use crate::models::category::{Category, flatten_category_paths};
 use crate::models::store::{Store, StoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
@@ -23,6 +24,7 @@ pub struct NewWorldFetcher {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
+    logger: Logger,
 }
 
 // -----------------------------------------------------------------------------
@@ -30,11 +32,12 @@ pub struct NewWorldFetcher {
 // -----------------------------------------------------------------------------
 
 impl NewWorldFetcher {
-    pub fn new() -> Self {
+    pub fn new(logger: Logger) -> Self {
         Self {
             client: Client::new(),
             token: None,
             categories: None,
+            logger,
         }
     }
 
@@ -111,7 +114,7 @@ impl NewWorldFetcher {
         category_path: &[String],
     ) -> Result<Vec<SuperMarketItem>, FetchError> {
         let category_display = category_path.join(" > ");
-        println!("[NewWorld] Fetching items for category: {}...", category_display);
+        self.logger.fetching_category(&category_display);
 
         let token = self.get_auth().await?;
         let headers = self.build_headers(token);
@@ -158,7 +161,7 @@ impl NewWorldFetcher {
                 .map_err(FetchError::Request)?;
 
             if !response.status().is_success() {
-                eprintln!("Failed to fetch: {}", response.status());
+                self.logger.error(&format!("Failed to fetch: {}", response.status()));
                 break;
             }
 
@@ -198,18 +201,8 @@ impl NewWorldFetcher {
             page += 1;
         }
 
-        println!("[NewWorld] Fetched {} items for category: {}", items.len(), category_display);
+        self.logger.fetched_category(items.len(), &category_display);
         Ok(items)
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Default Implementation
-// -----------------------------------------------------------------------------
-
-impl Default for NewWorldFetcher {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -255,7 +248,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
     // --- Stores ---
 
     async fn get_stores(&self) -> Result<Vec<Store>, FetchError> {
-        println!("[NewWorld] Fetching stores...");
+        self.logger.fetching("stores");
 
         let token = self.get_auth().await?;
         let headers = self.build_headers(token);
@@ -270,7 +263,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
 
         let stores_response: StoresResponse = response.json().await.map_err(FetchError::Request)?;
 
-        println!("[NewWorld] Fetched {} stores", stores_response.stores.len());
+        self.logger.fetched(stores_response.stores.len(), "stores");
         Ok(stores_response.stores)
     }
 
@@ -281,7 +274,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
             return Ok(categories.clone());
         }
 
-        println!("[NewWorld] Fetching categories...");
+        self.logger.fetching("categories");
         let store_id = store_id.unwrap_or(DEFAULT_STORE_ID);
         let token = self.get_auth().await?;
         let headers = self.build_headers(token);
@@ -299,7 +292,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
 
         let categories: Vec<Category> = response.json().await.map_err(FetchError::Request)?;
 
-        println!("[NewWorld] Fetched {} top-level categories", categories.len());
+        self.logger.fetched(categories.len(), "top-level categories");
         self.categories = Some(categories.clone());
         Ok(categories)
     }
@@ -307,13 +300,13 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
     // --- Items ---
 
     async fn get_items(&mut self, store_id: Option<&str>) -> Result<Vec<SuperMarketItem>, FetchError> {
-        println!("[NewWorld] Fetching all items...");
+        self.logger.fetching("all items");
 
         let store_id = store_id.unwrap_or(DEFAULT_STORE_ID);
         let categories = self.get_categories(Some(store_id)).await?;
         let category_paths = flatten_category_paths(&categories);
 
-        println!("[NewWorld] Found {} categories to fetch", category_paths.len());
+        self.logger.found(category_paths.len(), "categories to fetch");
 
         let mut items: Vec<SuperMarketItem> = Vec::new();
         for category_path in &category_paths {
@@ -321,7 +314,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
             items.extend(category_items);
         }
 
-        println!("[NewWorld] Fetched {} total items", items.len());
+        self.logger.fetched(items.len(), "total items");
         Ok(items)
     }
 
