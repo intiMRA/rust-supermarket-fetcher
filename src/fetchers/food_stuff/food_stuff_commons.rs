@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
+use crate::models::category::Category;
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
 use crate::protocols::food_stuff_common_protocol::FoodStuffCommonsProtocol;
@@ -33,6 +34,10 @@ impl FoodStuff {
 }
 
 impl FoodStuffCommonsProtocol for FoodStuff {
+    fn supermarket(&self) -> Supermarket {
+        self.supermarket
+    }
+
     fn build_headers(&self, token: Option<Token>) -> HeaderMap {
         let mut headers = HeaderMap::new();
         if let Some(token) = token {
@@ -73,6 +78,43 @@ impl FoodStuffCommonsProtocol for FoodStuff {
         filter
     }
 
+    fn build_search_body(&self, store_id: &str, filter: &str, page: u32) -> Value {
+        let suffix = self.category_suffix;
+        serde_json::json!({
+            "algoliaQuery": {
+                "attributesToHighlight": [],
+                "attributesToRetrieve": [
+                    "productID",
+                    "Type",
+                    "sponsored",
+                    format!("category0{}", suffix),
+                    format!("category1{}", suffix),
+                    format!("category2{}", suffix)
+                ],
+                "facets": ["brand", "onPromotion", "productFacets", "tobacco"],
+                "filters": filter,
+                "highlightPostTag": "__/ais-highlight__",
+                "highlightPreTag": "__ais-highlight__",
+                "hitsPerPage": 5000,
+                "maxValuesPerFacet": 5000,
+                "page": page,
+                "analyticsTags": ["fs#WEB:desktop"]
+            },
+            "algoliaFacetQueries": [],
+            "storeId": store_id,
+            "hitsPerPage": 50,
+            "page": page,
+            "sortOrder": format!("{}_POPULARITY_ASC", suffix),
+            "tobaccoQuery": false,
+            "precisionMedia": {
+                "adDomain": "CATEGORY_PAGE",
+                "adPositions": [4, 8, 12],
+                "publishImpressionEvent": false,
+                "disableAds": true
+            }
+        })
+    }
+
     fn parse_token(&self, json: &Value) -> Option<Token> {
         if let Some(token) = json["access_token"].as_str()
             && let Some(expiry_time_string) = json["expires_time"].as_str()
@@ -87,7 +129,7 @@ impl FoodStuffCommonsProtocol for FoodStuff {
         }
     }
 
-    fn parse_products(&self, json: Value, category_display: String) -> Vec<SuperMarketItem> {
+    fn parse_products(&self, json: Value, fallback_category: &Category) -> Vec<SuperMarketItem> {
         let mut items: Vec<SuperMarketItem> = Vec::new();
         if let Some(products) = json["products"].as_array()
             && !products.is_empty()
@@ -105,6 +147,36 @@ impl FoodStuffCommonsProtocol for FoodStuff {
                         image_id
                     );
 
+                    // Parse category from categoryTrees, fallback to parent category
+                    let category = if let Some(category_trees) = product["categoryTrees"].as_array()
+                        && let Some(first_tree) = category_trees.first()
+                    {
+                        let level0 = first_tree["level0"].as_str().unwrap_or("");
+                        let level1 = first_tree["level1"].as_str().unwrap_or("");
+                        let level2 = first_tree["level2"].as_str().unwrap_or("");
+
+                        let mut parts = vec![];
+                        if !level0.is_empty() { parts.push(level0); }
+                        if !level1.is_empty() { parts.push(level1); }
+                        if !level2.is_empty() { parts.push(level2); }
+
+                        if parts.is_empty() {
+                            fallback_category.clone()
+                        } else {
+                            let display_name = parts.join(" > ");
+                            let slug = parts.last().map(|s| s.to_string()).unwrap_or_default();
+
+                            Category {
+                                display_name,
+                                slug,
+                                children: Vec::new(),
+                                supermarket: self.supermarket,
+                            }
+                        }
+                    } else {
+                        fallback_category.clone()
+                    };
+
                     items.push(SuperMarketItem {
                         id: id.to_string(),
                         name: name.to_string(),
@@ -113,7 +185,7 @@ impl FoodStuffCommonsProtocol for FoodStuff {
                         price: price_cents as f64 / 100.0,
                         brand_name,
                         size,
-                        category: category_display.clone(),
+                        category,
                     });
                 }
             }

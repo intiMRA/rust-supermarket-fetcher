@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SizeUnit {
     Kilogram(f64),
     Gram(f64),
@@ -35,6 +37,24 @@ impl SizeUnit {
             value_str.trim().parse::<u32>().ok().map(SizeUnit::Piece)
         } else {
             None
+        }
+    }
+
+    /// Extract the numeric value and unit name as separate parts.
+    ///
+    /// Useful for storing in database columns.
+    ///
+    /// # Returns
+    /// A tuple of (value, unit_name) where both are optional strings.
+    pub fn to_value_and_unit(&self) -> (Option<f64>, Option<String>) {
+        match self {
+            SizeUnit::Kilogram(v) => (Some(*v), Some("Kilogram".to_string())),
+            SizeUnit::Gram(v) => (Some(*v), Some("Gram".to_string())),
+            SizeUnit::Liter(v) => (Some(*v), Some("Liter".to_string())),
+            SizeUnit::Milliliter(v) => (Some(*v), Some("Milliliter".to_string())),
+            SizeUnit::Centimeter(v) => (Some(*v), Some("Centimeter".to_string())),
+            SizeUnit::Pack(v) => (Some(*v as f64), Some("Pack".to_string())),
+            SizeUnit::Piece(v) => (Some(*v as f64), Some("Piece".to_string())),
         }
     }
 }

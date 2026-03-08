@@ -1,3 +1,5 @@
+use crate::custom_types::supermarket_types::Supermarket;
+use crate::database::{Database, Repository};
 use crate::fetchers::food_stuff::food_stuff_commons::FoodStuff;
 use crate::fetchers::new_world_fetcher::NewWorldFetcher;
 use crate::fetchers::pack_n_save_fetcher::PackNSaveFetcher;
@@ -27,17 +29,89 @@ impl FetchController {
     }
 
     pub async fn run(&mut self) {
-        // Fetch from NewWorld
-        let wines = self.new_world_fetcher.get_items_for_category(None, "Red Cask Wine").await.unwrap();
-        println!("[NewWorld] Fetched: {} items", wines.len());
+        // Create data directory if it doesn't exist
+        tokio::fs::create_dir_all("data").await.unwrap();
+
+        // Open database
+        let db = Database::open("data/supermarket.db").expect("Failed to open database");
+        let repo = Repository::new(&db);
+
+        println!("Database opened: data/supermarket.db");
 
         // Fetch from NewWorld
-        let wines = self.pack_n_save_fetcher.get_items_for_category(None, "Red Cask Wine").await.unwrap();
-        println!("[PackNSave] Fetched: {} items", wines.len());
+        let new_world_stores = self.new_world_fetcher.get_stores().await.unwrap();
+        let num_stores = new_world_stores.len();
+        for (i, store) in new_world_stores.iter().enumerate() {
+            println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
 
-        // Fetch from Woolworths
-        let woolworth_wines = self.woolworth_fetcher.get_items_for_category(None, "cask-wine-2l").await.unwrap();
-        println!("[Woolworths] Fetched: {} items", woolworth_wines.len());
+            // Insert store into database
+            repo.insert_store(store, Supermarket::NewWorld)
+                .expect("Failed to insert store");
+
+            // Fetch and insert items
+            let items = self.new_world_fetcher
+                .get_items(Some(store.id.as_str()))
+                .await
+                .unwrap();
+
+            for item in &items {
+                repo.insert_item_with_price(item, &store.id)
+                    .expect("Failed to insert item");
+            }
+
+            println!("[NewWorld] Inserted {} items for {}", items.len(), store.name);
+        }
+
+        // Fetch from PackNSave
+        let pack_n_save_stores = self.pack_n_save_fetcher.get_stores().await.unwrap();
+        let num_stores = pack_n_save_stores.len();
+        for (i, store) in pack_n_save_stores.iter().enumerate() {
+            println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+
+            // Insert store into database
+            repo.insert_store(store, Supermarket::PakNSave)
+                .expect("Failed to insert store");
+
+            // Fetch and insert items
+            let items = self.pack_n_save_fetcher
+                .get_items(Some(store.id.as_str()))
+                .await
+                .unwrap();
+
+            for item in &items {
+                repo.insert_item_with_price(item, &store.id)
+                    .expect("Failed to insert item");
+            }
+
+            println!("[PakNSave] Inserted {} items for {}", items.len(), store.name);
+        }
+
+        // Fetch from Woolworths (single store, uniform pricing)
+        println!("[Woolworths] Fetching items...");
+
+        // Woolworths uses a default store since prices are uniform
+        let woolworth_store = crate::models::store::Store {
+            id: "default".to_string(),
+            name: "Woolworths (All Stores)".to_string(),
+            address: String::new(),
+            latitude: 0.0,
+            longitude: 0.0,
+        };
+        repo.insert_store(&woolworth_store, Supermarket::Woolworth)
+            .expect("Failed to insert Woolworths store");
+
+        let items = self.woolworth_fetcher
+            .get_items(None)
+            .await
+            .unwrap();
+
+        for item in &items {
+            repo.insert_item_with_price(item, "default")
+                .expect("Failed to insert item");
+        }
+
+        println!("[Woolworths] Inserted {} items", items.len());
+        println!("\nFetch complete! Data saved to data/supermarket.db");
     }
 }
 

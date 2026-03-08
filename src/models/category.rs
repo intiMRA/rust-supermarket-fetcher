@@ -1,40 +1,50 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use crate::custom_types::supermarket_types::Supermarket;
 
-#[derive(Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Category {
-    pub name: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(alias = "name")]
+    pub slug: String,
     #[serde(default)]
     pub children: Vec<Category>,
+    #[serde(default)]
+    pub supermarket: Supermarket
 }
 
 impl Category {
     pub fn flatten(&self) -> Vec<String> {
-        let mut names = vec![self.name.clone()];
+        let mut slugs = vec![self.slug.clone()];
         for child in &self.children {
-            names.extend(child.flatten());
+            slugs.extend(child.flatten());
         }
-        names
+        slugs
     }
 
-    pub fn flatten_paths(&self, parent_path: &[String]) -> Vec<Vec<String>> {
+    pub fn leaf_paths(&self, parent_path: &[String]) -> Vec<Vec<String>> {
         let mut current_path = parent_path.to_vec();
-        current_path.push(self.name.clone());
+        current_path.push(self.slug.clone());
 
-        let mut paths = vec![current_path.clone()];
+        if self.children.is_empty() {
+            return vec![current_path];
+        }
+
+        let mut paths = Vec::new();
         for child in &self.children {
-            paths.extend(child.flatten_paths(&current_path));
+            paths.extend(child.leaf_paths(&current_path));
         }
         paths
     }
 
-    pub fn get_trace(&self, category_name: &str) -> Vec<String> {
-        if self.name == category_name {
-            return vec![self.name.clone()];
+    pub fn get_trace(&self, category_slug: &str) -> Vec<String> {
+        if self.slug == category_slug {
+            return vec![self.slug.clone()];
         }
         for child in &self.children {
-            let child_trace = child.get_trace(category_name);
+            let child_trace = child.get_trace(category_slug);
             if !child_trace.is_empty() {
-                let mut trace = vec![self.name.clone()];
+                let mut trace = vec![self.slug.clone()];
                 trace.extend(child_trace);
                 return trace;
             }
@@ -47,8 +57,12 @@ pub fn flatten_categories(categories: &[Category]) -> Vec<String> {
     categories.iter().flat_map(|c| c.flatten()).collect()
 }
 
-pub fn flatten_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
-    categories.iter().flat_map(|c| c.flatten_paths(&[])).collect()
+pub fn leaf_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
+    categories.iter().flat_map(|c| c.leaf_paths(&[])).collect()
+}
+
+pub fn top_level_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
+    categories.iter().map(|c| vec![c.slug.clone()]).collect()
 }
 
 pub fn find_trace(categories: &[Category], name: &str) -> Vec<String> {

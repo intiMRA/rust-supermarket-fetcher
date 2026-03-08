@@ -25,15 +25,24 @@ impl LoggerProtocol for Logger {
         println!("[{}] Found {} {}", self.prefix, count, entity);
     }
 
-    fn fetching_category(&self, category: &str) {
-        println!("[{}] Fetching items for category: {}...", self.prefix, category);
+    fn fetching_category(&self, _category: &str) {
+        // Silent - too verbose to log each category
     }
 
-    fn fetched_category(&self, count: usize, category: &str) {
-        println!("[{}] Fetched {} items for category: {}", self.prefix, count, category);
+    fn fetched_category(&self, _count: usize, _category: &str) {
+        // Silent - too verbose to log each category
     }
 
     fn error(&self, message: &str) {
         eprintln!("[{}] Error: {}", self.prefix, message);
+    }
+
+    fn rate_limit_warning(&self, status: u16, message: &str) {
+        eprintln!("\n⚠️  [{}] RATE LIMITED (HTTP {}): {}", self.prefix, status, message);
+        eprintln!("⚠️  [{}] The API may be blocking requests. Consider increasing delays.\n", self.prefix);
+    }
+
+    fn retrying(&self, attempt: u32, max_attempts: u32) {
+        println!("[{}] Retrying... (attempt {}/{})", self.prefix, attempt, max_attempts);
     }
 }

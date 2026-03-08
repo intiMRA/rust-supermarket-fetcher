@@ -1,10 +1,12 @@
+use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
 use serde_json::Value;
+use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
-use crate::models::category::{Category, find_trace, flatten_category_paths};
+use crate::models::category::{Category, find_trace, top_level_category_paths};
 use crate::models::store::{Store, StoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
@@ -61,7 +63,14 @@ impl NewWorldFetcher {
 // Internal Fetch Methods
 // -----------------------------------------------------------------------------
 
+const REQUEST_DELAY_MS: u64 = 100;
+const MAX_RETRIES: u32 = 3;
+
 impl NewWorldFetcher {
+    fn is_rate_limited(status: u16) -> bool {
+        matches!(status, 429 | 403 | 503)
+    }
+
     async fn fetch_items_for_category_path(
         &self,
         store_id: &str,
@@ -69,6 +78,14 @@ impl NewWorldFetcher {
     ) -> Result<Vec<SuperMarketItem>, FetchError> {
         let category_display = category_path.join(" > ");
         self.logger.fetching_category(&category_display);
+
+        // Fallback category if item doesn't have categoryTrees
+        let fallback_category = Category {
+            display_name: category_display.clone(),
+            slug: category_path.last().cloned().unwrap_or_default(),
+            children: Vec::new(),
+            supermarket: self.commons.supermarket(),
+        };
 
         let token = self.get_auth().await?;
         let headers = self.commons.build_headers(token);
@@ -78,41 +95,49 @@ impl NewWorldFetcher {
         let mut items: Vec<SuperMarketItem> = Vec::new();
 
         loop {
-            let body = serde_json::json!({
-                "algoliaQuery": {
-                    "attributesToHighlight": [],
-                    "attributesToRetrieve": ["productID", "Type", "sponsored", "category0NI", "category1NI", "category2NI", "barCode"],
-                    "facets": ["brand", "category1NI", "onPromotion", "productFacets", "tobacco", "code"],
-                    "filters": filter,
-                    "highlightPostTag": "__/ais-highlight__",
-                    "highlightPreTag": "__ais-highlight__",
-                    "hitsPerPage": 5000,
-                    "maxValuesPerFacet": 5000,
-                    "page": page,
-                    "analyticsTags": ["fs#WEB:desktop"]
-                },
-                "algoliaFacetQueries": [],
-                "storeId": store_id,
-                "hitsPerPage": 50,
-                "page": page,
-                "sortOrder": "NI_POPULARITY_ASC",
-                "tobaccoQuery": false,
-                "precisionMedia": {
-                    "adDomain": "CATEGORY_PAGE",
-                    "adPositions": [4, 8, 12],
-                    "publishImpressionEvent": false,
-                    "disableAds": true
-                }
-            });
+            let body = self.commons.build_search_body(store_id, &filter, page);
 
-            let response = self
-                .client
-                .post("https://api-prod.newworld.co.nz/v1/edge/search/paginated/products")
-                .headers(headers.clone())
-                .json(&body)
-                .send()
-                .await
-                .map_err(FetchError::Request)?;
+            // Add delay between requests to avoid rate limiting
+            sleep(Duration::from_millis(REQUEST_DELAY_MS)).await;
+
+            let mut retry_count = 0;
+            let response = loop {
+                let result = self
+                    .client
+                    .post("https://api-prod.newworld.co.nz/v1/edge/search/paginated/products")
+                    .headers(headers.clone())
+                    .json(&body)
+                    .send()
+                    .await;
+
+                match result {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        if Self::is_rate_limited(status) {
+                            self.logger.rate_limit_warning(status, &category_display);
+                            retry_count += 1;
+                            if retry_count >= MAX_RETRIES {
+                                return Err(FetchError::RateLimited(status));
+                            }
+                            self.logger.retrying(retry_count, MAX_RETRIES);
+                            // Exponential backoff: 2s, 4s, 8s...
+                            sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                            continue;
+                        }
+                        break resp;
+                    }
+                    Err(e) => {
+                        // Retry on network errors (connection reset, incomplete message, etc.)
+                        retry_count += 1;
+                        if retry_count >= MAX_RETRIES {
+                            return Err(FetchError::Request(e));
+                        }
+                        self.logger.error(&format!("Network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                        sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                        continue;
+                    }
+                }
+            };
 
             if !response.status().is_success() {
                 self.logger.error(&format!("Failed to fetch: {}", response.status()));
@@ -120,7 +145,7 @@ impl NewWorldFetcher {
             }
 
             let json: Value = response.json().await.map_err(FetchError::Request)?;
-            let parsed_products = self.commons.parse_products(json, category_display.clone());
+            let parsed_products = self.commons.parse_products(json, &fallback_category);
             if parsed_products.is_empty() {
                 break;
             } else {
@@ -150,13 +175,28 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
         }
 
         let headers = self.commons.build_headers(None);
-        let response = self
-            .client
-            .post("https://www.newworld.co.nz/api/user/get-current-user")
-            .headers(headers)
-            .send()
-            .await
-            .map_err(FetchError::Request)?;
+        let mut retry_count = 0;
+        let response = loop {
+            let result = self
+                .client
+                .post("https://www.newworld.co.nz/api/user/get-current-user")
+                .headers(headers.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => break resp,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        return Err(FetchError::Request(e));
+                    }
+                    self.logger.error(&format!("Auth network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                    continue;
+                }
+            }
+        };
 
         let json: Value = response.json().await.map_err(FetchError::Request)?;
 
@@ -174,13 +214,28 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
         let token = self.get_auth().await?;
         let headers = self.commons.build_headers(token);
 
-        let response = self
-            .client
-            .get("https://api-prod.newworld.co.nz/v1/edge/store")
-            .headers(headers)
-            .send()
-            .await
-            .map_err(FetchError::Request)?;
+        let mut retry_count = 0;
+        let response = loop {
+            let result = self
+                .client
+                .get("https://api-prod.newworld.co.nz/v1/edge/store")
+                .headers(headers.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => break resp,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        return Err(FetchError::Request(e));
+                    }
+                    self.logger.error(&format!("Stores network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                    continue;
+                }
+            }
+        };
 
         let stores_response: StoresResponse = response.json().await.map_err(FetchError::Request)?;
 
@@ -200,16 +255,32 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
         let token = self.get_auth().await?;
         let headers = self.commons.build_headers(token);
 
-        let response = self
-            .client
-            .get(format!(
-                "https://api-prod.newworld.co.nz/v1/edge/store/{}/categories",
-                store_id
-            ))
-            .headers(headers)
-            .send()
-            .await
-            .map_err(FetchError::Request)?;
+        let url = format!(
+            "https://api-prod.newworld.co.nz/v1/edge/store/{}/categories",
+            store_id
+        );
+        let mut retry_count = 0;
+        let response = loop {
+            let result = self
+                .client
+                .get(&url)
+                .headers(headers.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => break resp,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        return Err(FetchError::Request(e));
+                    }
+                    self.logger.error(&format!("Categories network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                    continue;
+                }
+            }
+        };
 
         let categories: Vec<Category> = response.json().await.map_err(FetchError::Request)?;
 
@@ -225,7 +296,7 @@ impl SuperMarketFetcherProtocol for NewWorldFetcher {
 
         let store_id = store_id.unwrap_or(DEFAULT_STORE_ID);
         let categories = self.get_categories(Some(store_id)).await?;
-        let category_paths = flatten_category_paths(&categories);
+        let category_paths = top_level_category_paths(&categories);
 
         self.logger.found(category_paths.len(), "categories to fetch");
 

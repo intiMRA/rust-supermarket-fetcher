@@ -1,14 +1,16 @@
+use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde_json::Value;
+use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::{Category, find_trace, flatten_category_paths};
+use crate::models::category::{Category, find_trace, top_level_category_paths};
 use crate::protocols::logger_protocol::LoggerProtocol;
-use crate::models::store::Store;
+use crate::models::store::{Store, WoolworthsStoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
 use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
@@ -30,8 +32,10 @@ fn parse_shelves(shelves: &Value) -> Vec<Category> {
         for shelf in shelf_arr {
             if let Some(url) = shelf["url"].as_str() {
                 children.push(Category {
-                    name: url.to_string(),
+                    display_name: String::new(),
+                    slug: url.to_string(),
                     children: Vec::new(),
+                    supermarket: Supermarket::Woolworth,
                 });
             }
         }
@@ -44,10 +48,12 @@ fn parse_aisles(facets: &Value) -> Vec<Category> {
     if let Some(facet_arr) = facets.as_array() {
         for facet in facet_arr {
             let shelves = parse_shelves(&facet["shelfResponses"]);
-            if let Some(name) = facet["name"].as_str() {
+            if let Some(aisle_name) = facet["name"].as_str() {
                 children.push(Category {
-                    name: to_slug(name),
+                    display_name: String::new(),
+                    slug: to_slug(aisle_name),
                     children: shelves,
+                    supermarket: Supermarket::Woolworth,
                 });
             }
         }
@@ -102,6 +108,108 @@ impl WoolworthFetcher {
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
         headers
     }
+
+    fn build_store_api_headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/plain, */*"),
+        );
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            ),
+        );
+        headers.insert(
+            REFERER,
+            HeaderValue::from_static("https://www.woolworths.co.nz/"),
+        );
+        headers.insert(
+            "origin",
+            HeaderValue::from_static("https://www.woolworths.co.nz"),
+        );
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        headers.insert("sec-fetch-mode", HeaderValue::from_static("cors"));
+        headers.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+        headers
+    }
+
+    /// Fetch all Woolworths stores in New Zealand.
+    ///
+    /// Uses a central NZ location with high maxResults to get all stores.
+    ///
+    /// # Returns
+    /// Vector of Store objects with location information
+    pub async fn get_all_stores(&self) -> Result<Vec<Store>, FetchError> {
+        self.logger.fetching("all Woolworths stores");
+
+        // Central NZ coordinates (Wellington) with max results to get all stores
+        let url = format!(
+            "https://api.cdx.nz/site-location/api/v1/sites?latitude={}&longitude={}&maxResults={}",
+            -41.2865, 174.7762, 10000
+        );
+
+        let headers = self.build_store_api_headers();
+
+        let mut retry_count = 0;
+        let response = loop {
+            let result = self
+                .client
+                .get(&url)
+                .headers(headers.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    if Self::is_rate_limited(status) {
+                        self.logger.rate_limit_warning(status, "Woolworths stores");
+                        retry_count += 1;
+                        if retry_count >= MAX_RETRIES {
+                            return Err(FetchError::RateLimited(status));
+                        }
+                        self.logger.retrying(retry_count, MAX_RETRIES);
+                        sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                        continue;
+                    }
+                    break resp;
+                }
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        return Err(FetchError::Request(e));
+                    }
+                    self.logger.error(&format!(
+                        "Stores network error: {} - retrying ({}/{})",
+                        e, retry_count, MAX_RETRIES
+                    ));
+                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                    continue;
+                }
+            }
+        };
+
+        if !response.status().is_success() {
+            return Err(FetchError::CategoryFetch {
+                category: "stores".to_string(),
+                status: response.status().as_u16(),
+            });
+        }
+
+        let stores_response: WoolworthsStoresResponse =
+            response.json().await.map_err(FetchError::Request)?;
+
+        let stores: Vec<Store> = stores_response
+            .site_detail
+            .into_iter()
+            .map(|detail| Store::from(detail.site))
+            .collect();
+
+        self.logger.fetched(stores.len(), "Woolworths stores");
+        Ok(stores)
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -123,7 +231,36 @@ impl WoolworthFetcher {
 // Internal Fetch Methods
 // -----------------------------------------------------------------------------
 
+const REQUEST_DELAY_MS: u64 = 100;
+const MAX_RETRIES: u32 = 3;
+
 impl WoolworthFetcher {
+    fn is_rate_limited(status: u16) -> bool {
+        matches!(status, 429 | 403 | 503)
+    }
+
+    fn parse_breadcrumb_category(json: &Value) -> Category {
+        let breadcrumb = &json["breadcrumb"];
+        let department = breadcrumb["department"]["name"].as_str().unwrap_or("");
+        let aisle = breadcrumb["aisle"]["name"].as_str().unwrap_or("");
+        let shelf = breadcrumb["shelf"]["name"].as_str().unwrap_or("");
+
+        let mut parts = vec![];
+        if !department.is_empty() { parts.push(department); }
+        if !aisle.is_empty() { parts.push(aisle); }
+        if !shelf.is_empty() { parts.push(shelf); }
+
+        let display_name = parts.join(" > ");
+        let slug = parts.last().map(|s| s.to_string()).unwrap_or_default();
+
+        Category {
+            display_name,
+            slug,
+            children: Vec::new(),
+            supermarket: Supermarket::Woolworth,
+        }
+    }
+
     async fn fetch_items_for_category_path(
         &self,
         category_path: &[String],
@@ -155,13 +292,46 @@ impl WoolworthFetcher {
                 page
             );
 
-            let response = self
-                .client
-                .get(&fetch_url)
-                .headers(headers.clone())
-                .send()
-                .await
-                .map_err(FetchError::Request)?;
+            // Add delay between requests to avoid rate limiting
+            sleep(Duration::from_millis(REQUEST_DELAY_MS)).await;
+
+            let mut retry_count = 0;
+            let response = loop {
+                let result = self
+                    .client
+                    .get(&fetch_url)
+                    .headers(headers.clone())
+                    .send()
+                    .await;
+
+                match result {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        if Self::is_rate_limited(status) {
+                            self.logger.rate_limit_warning(status, &category_display);
+                            retry_count += 1;
+                            if retry_count >= MAX_RETRIES {
+                                return Err(FetchError::RateLimited(status));
+                            }
+                            self.logger.retrying(retry_count, MAX_RETRIES);
+                            // Exponential backoff: 2s, 4s, 8s...
+                            sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                            continue;
+                        }
+                        break resp;
+                    }
+                    Err(e) => {
+                        // Retry on network errors (connection reset, incomplete message, etc.)
+                        retry_count += 1;
+                        if retry_count >= MAX_RETRIES {
+                            return Err(FetchError::Request(e));
+                        }
+                        self.logger.error(&format!("Network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                        sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                        continue;
+                    }
+                }
+            };
 
             if !response.status().is_success() {
                 self.logger.error(&format!("Failed to fetch: {}", response.status()));
@@ -169,6 +339,9 @@ impl WoolworthFetcher {
             }
 
             let json: Value = response.json().await.map_err(FetchError::Request)?;
+
+            // Parse category from breadcrumb
+            let category = Self::parse_breadcrumb_category(&json);
 
             if let Some(json_items) = json["products"]["items"].as_array()
                 && !json_items.is_empty()
@@ -192,7 +365,7 @@ impl WoolworthFetcher {
                             price,
                             brand_name: brand_name.to_string(),
                             size,
-                            category: category_display.clone(),
+                            category: category.clone(),
                         });
                     }
                 }
@@ -222,7 +395,7 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
     // --- Stores ---
 
     async fn get_stores(&self) -> Result<Vec<Store>, FetchError> {
-        Ok(Vec::new())
+        self.get_all_stores().await
     }
 
     // --- Categories ---
@@ -234,13 +407,28 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
 
         self.logger.fetching("categories");
         let headers = self.build_headers();
-        let response = self
-            .client
-            .get("https://www.woolworths.co.nz/api/v1/shell")
-            .headers(headers)
-            .send()
-            .await
-            .map_err(FetchError::Request)?;
+        let mut retry_count = 0;
+        let response = loop {
+            let result = self
+                .client
+                .get("https://www.woolworths.co.nz/api/v1/shell")
+                .headers(headers.clone())
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => break resp,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        return Err(FetchError::Request(e));
+                    }
+                    self.logger.error(&format!("Categories network error: {} - retrying ({}/{})", e, retry_count, MAX_RETRIES));
+                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
+                    continue;
+                }
+            }
+        };
 
         let json: Value = response.json().await.map_err(FetchError::Request)?;
 
@@ -250,8 +438,10 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
                 if let Some(url) = special["url"].as_str() {
                     let aisles = parse_aisles(&special["dasFacets"]);
                     categories.push(Category {
-                        name: url.to_string(),
+                        display_name: String::new(),
+                        slug: url.to_string(),
                         children: aisles,
+                        supermarket: Supermarket::Woolworth,
                     });
                 }
             }
@@ -268,7 +458,7 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
         self.logger.fetching("all items");
 
         let categories = self.get_categories(None).await?;
-        let category_paths = flatten_category_paths(&categories);
+        let category_paths = top_level_category_paths(&categories);
 
         self.logger.found(category_paths.len(), "categories to fetch");
 

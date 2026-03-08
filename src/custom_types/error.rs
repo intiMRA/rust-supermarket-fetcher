@@ -13,4 +13,7 @@ pub enum FetchError {
 
     #[error("Missing authentication token")]
     MissingToken,
+
+    #[error("Rate limited by API (HTTP {0}) - too many requests")]
+    RateLimited(u16),
 }
