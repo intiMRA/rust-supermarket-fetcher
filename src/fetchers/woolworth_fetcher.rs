@@ -10,7 +10,7 @@ use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
 use crate::models::category::{Category, find_trace, top_level_category_paths};
 use crate::protocols::logger_protocol::LoggerProtocol;
-use crate::models::store::{Store, WoolworthsStoresResponse};
+use crate::models::store::Store;
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
 use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
@@ -107,108 +107,6 @@ impl WoolworthFetcher {
         );
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
         headers
-    }
-
-    fn build_store_api_headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_static("application/json, text/plain, */*"),
-        );
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-            ),
-        );
-        headers.insert(
-            REFERER,
-            HeaderValue::from_static("https://www.woolworths.co.nz/"),
-        );
-        headers.insert(
-            "origin",
-            HeaderValue::from_static("https://www.woolworths.co.nz"),
-        );
-        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
-        headers.insert("sec-fetch-mode", HeaderValue::from_static("cors"));
-        headers.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
-        headers
-    }
-
-    /// Fetch all Woolworths stores in New Zealand.
-    ///
-    /// Uses a central NZ location with high maxResults to get all stores.
-    ///
-    /// # Returns
-    /// Vector of Store objects with location information
-    pub async fn get_all_stores(&self) -> Result<Vec<Store>, FetchError> {
-        self.logger.fetching("all Woolworths stores");
-
-        // Central NZ coordinates (Wellington) with max results to get all stores
-        let url = format!(
-            "https://api.cdx.nz/site-location/api/v1/sites?latitude={}&longitude={}&maxResults={}",
-            -41.2865, 174.7762, 10000
-        );
-
-        let headers = self.build_store_api_headers();
-
-        let mut retry_count = 0;
-        let response = loop {
-            let result = self
-                .client
-                .get(&url)
-                .headers(headers.clone())
-                .send()
-                .await;
-
-            match result {
-                Ok(resp) => {
-                    let status = resp.status().as_u16();
-                    if Self::is_rate_limited(status) {
-                        self.logger.rate_limit_warning(status, "Woolworths stores");
-                        retry_count += 1;
-                        if retry_count >= MAX_RETRIES {
-                            return Err(FetchError::RateLimited(status));
-                        }
-                        self.logger.retrying(retry_count, MAX_RETRIES);
-                        sleep(Duration::from_secs(2u64.pow(retry_count))).await;
-                        continue;
-                    }
-                    break resp;
-                }
-                Err(e) => {
-                    retry_count += 1;
-                    if retry_count >= MAX_RETRIES {
-                        return Err(FetchError::Request(e));
-                    }
-                    self.logger.error(&format!(
-                        "Stores network error: {} - retrying ({}/{})",
-                        e, retry_count, MAX_RETRIES
-                    ));
-                    sleep(Duration::from_secs(2u64.pow(retry_count))).await;
-                    continue;
-                }
-            }
-        };
-
-        if !response.status().is_success() {
-            return Err(FetchError::CategoryFetch {
-                category: "stores".to_string(),
-                status: response.status().as_u16(),
-            });
-        }
-
-        let stores_response: WoolworthsStoresResponse =
-            response.json().await.map_err(FetchError::Request)?;
-
-        let stores: Vec<Store> = stores_response
-            .site_detail
-            .into_iter()
-            .map(|detail| Store::from(detail.site))
-            .collect();
-
-        self.logger.fetched(stores.len(), "Woolworths stores");
-        Ok(stores)
     }
 }
 
@@ -393,9 +291,16 @@ impl SuperMarketFetcherProtocol for WoolworthFetcher {
     }
 
     // --- Stores ---
+    // Woolworths has uniform pricing nationwide, so we use a single "default" store
 
     async fn get_stores(&self) -> Result<Vec<Store>, FetchError> {
-        self.get_all_stores().await
+        Ok(vec![Store {
+            id: "default".to_string(),
+            name: "Woolworths (All Stores)".to_string(),
+            address: String::new(),
+            latitude: 0.0,
+            longitude: 0.0,
+        }])
     }
 
     // --- Categories ---
