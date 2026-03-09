@@ -6,7 +6,7 @@ use crate::models::store::Store;
 use crate::models::token::Token;
 
 #[async_trait]
-pub trait SuperMarketFetcherProtocol: Send + Sync {
+pub trait SuperMarketFetcherTrait: Send + Sync {
     async fn get_auth(&self) -> Result<Option<Token>, FetchError>;
     async fn get_items(&mut self, store_id: Option<&str>) -> Result<Vec<SuperMarketItem>, FetchError>;
     async fn get_categories(&mut self, store_id: Option<&str>) -> Result<Vec<Category>, FetchError>;

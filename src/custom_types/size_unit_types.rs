@@ -46,15 +46,15 @@ impl SizeUnit {
     ///
     /// # Returns
     /// A tuple of (value, unit_name) where both are optional strings.
-    pub fn to_value_and_unit(&self) -> (Option<f64>, Option<String>) {
+    pub fn to_value_and_unit(&self) -> (Option<f64>, Option<&'static str>) {
         match self {
-            SizeUnit::Kilogram(v) => (Some(*v), Some("Kilogram".to_string())),
-            SizeUnit::Gram(v) => (Some(*v), Some("Gram".to_string())),
-            SizeUnit::Liter(v) => (Some(*v), Some("Liter".to_string())),
-            SizeUnit::Milliliter(v) => (Some(*v), Some("Milliliter".to_string())),
-            SizeUnit::Centimeter(v) => (Some(*v), Some("Centimeter".to_string())),
-            SizeUnit::Pack(v) => (Some(*v as f64), Some("Pack".to_string())),
-            SizeUnit::Piece(v) => (Some(*v as f64), Some("Piece".to_string())),
+            SizeUnit::Kilogram(v) => (Some(*v), Some("Kilogram")),
+            SizeUnit::Gram(v) => (Some(*v), Some("Gram")),
+            SizeUnit::Liter(v) => (Some(*v), Some("Liter")),
+            SizeUnit::Milliliter(v) => (Some(*v), Some("Milliliter")),
+            SizeUnit::Centimeter(v) => (Some(*v), Some("Centimeter")),
+            SizeUnit::Pack(v) => (Some(*v as f64), Some("Pack")),
+            SizeUnit::Piece(v) => (Some(*v as f64), Some("Piece")),
         }
     }
 }

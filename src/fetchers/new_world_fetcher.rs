@@ -10,9 +10,9 @@ use crate::models::category::{Category, find_trace, top_level_category_paths};
 use crate::models::store::{Store, StoresResponse};
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
-use crate::protocols::food_stuff_common_protocol::FoodStuffCommonsProtocol;
-use crate::protocols::logger_protocol::LoggerProtocol;
-use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
+use crate::traits::food_stuff_common_trait::FoodStuffCommonsTrait;
+use crate::traits::logger_trait::LoggerTrait;
+use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
 const DEFAULT_STORE_ID: &str = "60928d93-06fa-4d8f-92a6-8c359e7e846d";
 
@@ -24,8 +24,8 @@ pub struct NewWorldFetcher {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
-    logger: Box<dyn LoggerProtocol>,
-    commons: Box<dyn FoodStuffCommonsProtocol>,
+    logger: Box<dyn LoggerTrait>,
+    commons: Box<dyn FoodStuffCommonsTrait>,
 }
 
 // -----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ pub struct NewWorldFetcher {
 // -----------------------------------------------------------------------------
 
 impl NewWorldFetcher {
-    pub fn new(logger: Box<dyn LoggerProtocol>, commons: Box<dyn FoodStuffCommonsProtocol>) -> Self {
+    pub fn new(logger: Box<dyn LoggerTrait>, commons: Box<dyn FoodStuffCommonsTrait>) -> Self {
         Self {
             client: Client::new(),
             token: None,
@@ -160,11 +160,11 @@ impl NewWorldFetcher {
 }
 
 // -----------------------------------------------------------------------------
-// Protocol Implementation
+// Trait Implementation
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherProtocol for NewWorldFetcher {
+impl SuperMarketFetcherTrait for NewWorldFetcher {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {

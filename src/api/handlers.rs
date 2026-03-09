@@ -1,5 +1,5 @@
 use actix_web::{web, HttpResponse, Responder};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use crate::database::Database;
 use crate::services::{
@@ -23,7 +23,7 @@ pub async fn shopping_list(
     data: web::Data<AppState>,
     request: web::Json<ShoppingListRequest>,
 ) -> impl Responder {
-    let db = data.db.lock().unwrap();
+    let db = data.db.lock().await;
     let response = process_shopping_list(&request, &db);
 
     HttpResponse::Ok().json(response)

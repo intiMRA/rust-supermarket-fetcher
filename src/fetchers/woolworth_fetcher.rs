@@ -9,11 +9,11 @@ use crate::custom_types::error::FetchError;
 use crate::custom_types::size_unit_types::SizeUnit;
 use crate::custom_types::supermarket_types::Supermarket;
 use crate::models::category::{Category, find_trace, top_level_category_paths};
-use crate::protocols::logger_protocol::LoggerProtocol;
+use crate::traits::logger_trait::LoggerTrait;
 use crate::models::store::Store;
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
-use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
+use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
 // -----------------------------------------------------------------------------
 // Category Parsing Helpers
@@ -68,7 +68,7 @@ fn parse_aisles(facets: &Value) -> Vec<Category> {
 pub struct WoolworthFetcher {
     client: Client,
     categories: Option<Vec<Category>>,
-    logger: Box<dyn LoggerProtocol>,
+    logger: Box<dyn LoggerTrait>,
 }
 
 // -----------------------------------------------------------------------------
@@ -76,7 +76,7 @@ pub struct WoolworthFetcher {
 // -----------------------------------------------------------------------------
 
 impl WoolworthFetcher {
-    pub fn new(logger: Box<dyn LoggerProtocol>) -> Self {
+    pub fn new(logger: Box<dyn LoggerTrait>) -> Self {
         Self {
             client: Client::new(),
             categories: None,
@@ -279,11 +279,11 @@ impl WoolworthFetcher {
 }
 
 // -----------------------------------------------------------------------------
-// Protocol Implementation
+// Trait Implementation
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherProtocol for WoolworthFetcher {
+impl SuperMarketFetcherTrait for WoolworthFetcher {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {

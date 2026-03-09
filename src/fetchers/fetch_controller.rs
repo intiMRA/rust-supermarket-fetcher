@@ -5,12 +5,12 @@ use crate::fetchers::new_world_fetcher::NewWorldFetcher;
 use crate::fetchers::pack_n_save_fetcher::PackNSaveFetcher;
 use crate::fetchers::woolworth_fetcher::WoolworthFetcher;
 use crate::logger::Logger;
-use crate::protocols::super_market_fetcher_protocol::SuperMarketFetcherProtocol;
+use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
 pub struct FetchController {
-    woolworth_fetcher: Box<dyn SuperMarketFetcherProtocol>,
-    new_world_fetcher: Box<dyn SuperMarketFetcherProtocol>,
-    pack_n_save_fetcher: Box<dyn SuperMarketFetcherProtocol>,
+    woolworth_fetcher: Box<dyn SuperMarketFetcherTrait>,
+    new_world_fetcher: Box<dyn SuperMarketFetcherTrait>,
+    pack_n_save_fetcher: Box<dyn SuperMarketFetcherTrait>,
 }
 
 impl FetchController {

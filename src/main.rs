@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use actix_web::{web, App, HttpServer};
 
@@ -13,7 +13,7 @@ pub mod fetchers;
 pub mod logger;
 pub mod matching;
 pub mod models;
-pub mod protocols;
+pub mod traits;
 pub mod services;
 pub mod utils;
 

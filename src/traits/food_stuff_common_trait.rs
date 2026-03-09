@@ -6,7 +6,7 @@ use crate::models::category::Category;
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
 
-pub trait FoodStuffCommonsProtocol: Send + Sync {
+pub trait FoodStuffCommonsTrait: Send + Sync {
     fn supermarket(&self) -> Supermarket;
     fn build_headers(&self, token: Option<Token>) -> HeaderMap;
     fn build_category_filter(&self, store_id: &str, category_path: &[String]) -> String;

@@ -1,4 +1,4 @@
-pub trait LoggerProtocol: Send + Sync {
+pub trait LoggerTrait: Send + Sync {
     fn fetching(&self, entity: &str);
     fn fetched(&self, count: usize, entity: &str);
     fn found(&self, count: usize, entity: &str);

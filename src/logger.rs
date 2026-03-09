@@ -1,4 +1,4 @@
-use crate::protocols::logger_protocol::LoggerProtocol;
+use crate::traits::logger_trait::LoggerTrait;
 
 pub struct Logger {
     prefix: String,
@@ -12,7 +12,7 @@ impl Logger {
     }
 }
 
-impl LoggerProtocol for Logger {
+impl LoggerTrait for Logger {
     fn fetching(&self, entity: &str) {
         println!("[{}] Fetching {}...", self.prefix, entity);
     }

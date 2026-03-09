@@ -7,7 +7,7 @@ use crate::custom_types::supermarket_types::Supermarket;
 use crate::models::category::Category;
 use crate::models::super_market_item::SuperMarketItem;
 use crate::models::token::Token;
-use crate::protocols::food_stuff_common_protocol::FoodStuffCommonsProtocol;
+use crate::traits::food_stuff_common_trait::FoodStuffCommonsTrait;
 
 pub struct FoodStuff {
     referer: &'static str,
@@ -33,7 +33,7 @@ impl FoodStuff {
     }
 }
 
-impl FoodStuffCommonsProtocol for FoodStuff {
+impl FoodStuffCommonsTrait for FoodStuff {
     fn supermarket(&self) -> Supermarket {
         self.supermarket
     }
