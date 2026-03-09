@@ -13,7 +13,7 @@ pub struct SuperMarketItem {
     pub image_url: String,
     pub price: f64,
     pub brand_name: String,
-    pub size: Option<SizeUnit>,
+    pub size: SizeUnit,
     pub category: Category,
 }
 

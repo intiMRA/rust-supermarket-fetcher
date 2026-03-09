@@ -1,5 +1,4 @@
 use rusqlite::params;
-
 use super::Database;
 use crate::custom_types::supermarket_types::Supermarket;
 use crate::models::store::Store;
@@ -131,10 +130,7 @@ impl<'a> Repository<'a> {
         )?;
 
         // Extract size info
-        let (size_value, size_unit) = match &item.size {
-            Some(size) => size.to_value_and_unit(),
-            None => (None, None),
-        };
+        let (size_value, size_unit) = &item.size.to_value_and_unit();
 
         // Insert product
         self.db.conn.execute(

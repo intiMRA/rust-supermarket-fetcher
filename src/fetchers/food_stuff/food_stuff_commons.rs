@@ -140,7 +140,7 @@ impl FoodStuffCommonsTrait for FoodStuff {
                     && let Some(price_cents) = product["singlePrice"]["price"].as_i64()
                 {
                     let brand_name = product["brand"].as_str().unwrap_or("").to_string();
-                    let size = product["displayName"].as_str().and_then(SizeUnit::parse);
+                    let size = SizeUnit::parse(product["displayName"].as_str().unwrap_or("Unknown"));
                     let image_id = id.split('-').next().unwrap_or(id);
                     let image_url = format!(
                         "https://a.fsimg.co.nz/product/retail/fan/image/400x400/{}.png",

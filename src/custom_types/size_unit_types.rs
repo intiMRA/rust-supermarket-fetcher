@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SizeUnit {
     Kilogram(f64),
@@ -9,34 +8,35 @@ pub enum SizeUnit {
     Centimeter(f64),
     Pack(u32),
     Piece(u32),
+    Unknown
 }
 
 impl SizeUnit {
-    pub fn parse(s: &str) -> Option<SizeUnit> {
+    pub fn parse(s: &str) -> SizeUnit {
         let s = s.to_lowercase();
 
         if let Some(value_str) = s.strip_suffix("kg") {
-            value_str.trim().parse::<f64>().ok().map(SizeUnit::Kilogram)
+            value_str.trim().parse::<f64>().map(SizeUnit::Kilogram).unwrap()
         } else if let Some(value_str) = s.strip_suffix('g') {
-            value_str.trim().parse::<f64>().ok().map(SizeUnit::Gram)
+            value_str.trim().parse::<f64>().map(SizeUnit::Gram).unwrap()
         } else if let Some(value_str) = s.strip_suffix("ml") {
-            value_str.trim().parse::<f64>().ok().map(SizeUnit::Milliliter)
+            value_str.trim().parse::<f64>().map(SizeUnit::Milliliter).unwrap()
         } else if let Some(value_str) = s.strip_suffix('l') {
-            value_str.trim().parse::<f64>().ok().map(SizeUnit::Liter)
+            value_str.trim().parse::<f64>().map(SizeUnit::Liter).unwrap()
         } else if let Some(value_str) = s.strip_suffix("cm") {
-            value_str.trim().parse::<f64>().ok().map(SizeUnit::Centimeter)
+            value_str.trim().parse::<f64>().map(SizeUnit::Centimeter).unwrap()
         } else if let Some(value_str) = s.strip_suffix("pack") {
-            value_str.trim().parse::<u32>().ok().map(SizeUnit::Pack)
+            value_str.trim().parse::<u32>().map(SizeUnit::Pack).unwrap()
         } else if let Some(value_str) = s.strip_suffix("pk") {
-            value_str.trim().parse::<u32>().ok().map(SizeUnit::Pack)
+            value_str.trim().parse::<u32>().map(SizeUnit::Pack).unwrap()
         } else if let Some(value_str) = s.strip_suffix("pcs") {
-            value_str.trim().parse::<u32>().ok().map(SizeUnit::Piece)
+            value_str.trim().parse::<u32>().map(SizeUnit::Piece).unwrap()
         } else if let Some(value_str) = s.strip_suffix("pce") {
-            value_str.trim().parse::<u32>().ok().map(SizeUnit::Piece)
+            value_str.trim().parse::<u32>().map(SizeUnit::Piece).unwrap()
         } else if let Some(value_str) = s.strip_suffix("pc") {
-            value_str.trim().parse::<u32>().ok().map(SizeUnit::Piece)
+            value_str.trim().parse::<u32>().map(SizeUnit::Piece).unwrap()
         } else {
-            None
+            SizeUnit::Unknown
         }
     }
 
@@ -46,15 +46,16 @@ impl SizeUnit {
     ///
     /// # Returns
     /// A tuple of (value, unit_name) where both are optional strings.
-    pub fn to_value_and_unit(&self) -> (Option<f64>, Option<&'static str>) {
+    pub fn to_value_and_unit(&self) -> (f64, &str) {
         match self {
-            SizeUnit::Kilogram(v) => (Some(*v), Some("Kilogram")),
-            SizeUnit::Gram(v) => (Some(*v), Some("Gram")),
-            SizeUnit::Liter(v) => (Some(*v), Some("Liter")),
-            SizeUnit::Milliliter(v) => (Some(*v), Some("Milliliter")),
-            SizeUnit::Centimeter(v) => (Some(*v), Some("Centimeter")),
-            SizeUnit::Pack(v) => (Some(*v as f64), Some("Pack")),
-            SizeUnit::Piece(v) => (Some(*v as f64), Some("Piece")),
+            SizeUnit::Kilogram(v) => (*v, "Kilogram"),
+            SizeUnit::Gram(v) => (*v, "Gram"),
+            SizeUnit::Liter(v) => (*v, "Liter"),
+            SizeUnit::Milliliter(v) => (*v, "Milliliter"),
+            SizeUnit::Centimeter(v) => (*v, "Centimeter"),
+            SizeUnit::Pack(v) => (*v as f64, "Pack"),
+            SizeUnit::Piece(v) => (*v as f64, "Piece"),
+            SizeUnit::Unknown => (0.0, "Unknown"),
         }
     }
 }

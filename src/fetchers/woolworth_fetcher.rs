@@ -251,9 +251,9 @@ impl WoolworthFetcher {
                         && let Some(price) = json_item["price"]["salePrice"].as_f64()
                         && let Some(brand_name) = json_item["brand"].as_str()
                     {
-                        let size = json_item["size"]["volumeSize"]
+                        let size = SizeUnit::parse(json_item["size"]["volumeSize"]
                             .as_str()
-                            .and_then(SizeUnit::parse);
+                            .unwrap_or("Unknown"));
 
                         items.push(SuperMarketItem {
                             id: id.to_string(),
