@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::database::{Database, Queries};
-use crate::matching::fuzzy_matcher::find_matching_products;
+use crate::matching::fuzzy_matcher::{find_matching_products, Product};
 use crate::utils::geo::haversine_distance_km;
 
 /// Default similarity threshold for fuzzy matching (60%).
@@ -109,22 +109,20 @@ pub fn process_shopping_list(
             let db_products = queries.search_products_in_stores(search_term, &store_ids);
 
             // Convert to fuzzy matcher format
-            let products_for_matching: Vec<(String, String, f64, String, String, String, f64, f64)> =
-                db_products
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.product_name.clone(),
-                            p.brand.clone(),
-                            p.price,
-                            p.supermarket.clone(),
-                            p.store_name.clone(),
-                            p.store_id.clone(),
-                            p.store_latitude,
-                            p.store_longitude,
-                        )
-                    })
-                    .collect();
+            let products_for_matching: Vec<Product> = db_products
+                .iter()
+                .map(|p| Product {
+                    product_name: p.product_name.clone(),
+                    brand: p.brand.clone(),
+                    price: p.price,
+                    supermarket: p.supermarket.clone(),
+                    store_name: p.store_name.clone(),
+                    store_id: p.store_id.clone(),
+                    store_latitude: p.store_latitude,
+                    store_longitude: p.store_longitude,
+                    similarity_score: 0.0,
+                })
+                .collect();
 
             // Find matching products using fuzzy matching
             let matches = find_matching_products(

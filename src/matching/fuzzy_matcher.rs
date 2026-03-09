@@ -3,7 +3,7 @@ use strsim::jaro_winkler;
 
 /// A product match result with similarity score and store information.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProductMatch {
+pub struct Product {
     pub product_name: String,
     pub brand: String,
     pub price: f64,
@@ -54,33 +54,25 @@ fn calculate_similarity(search_term: &str, product_name: &str) -> f64 {
 ///
 /// # Arguments
 /// * `search_term` - The term to search for
-/// * `products` - List of products to search through (name, brand, price, supermarket, store_name, store_id, lat, lon)
+/// * `products` - List of products to search through
 /// * `threshold` - Minimum similarity score (0.0 to 1.0, e.g., 0.6 = 60%)
 ///
 /// # Returns
 /// Vector of matching products sorted by similarity score (descending)
 pub fn find_matching_products(
     search_term: &str,
-    products: &[(String, String, f64, String, String, String, f64, f64)],
+    products: &[Product],
     threshold: f64,
-) -> Vec<ProductMatch> {
-    let mut matches: Vec<ProductMatch> = products
+) -> Vec<Product> {
+    let mut matches: Vec<Product> = products
         .iter()
-        .filter_map(|(name, brand, price, supermarket, store_name, store_id, lat, lon)| {
-            let similarity = calculate_similarity(search_term, name);
+        .filter_map(|product| {
+            let similarity = calculate_similarity(search_term, product.product_name.as_str());
 
             if similarity >= threshold {
-                Some(ProductMatch {
-                    product_name: name.clone(),
-                    brand: brand.clone(),
-                    price: *price,
-                    supermarket: supermarket.clone(),
-                    store_name: store_name.clone(),
-                    store_id: store_id.clone(),
-                    store_latitude: *lat,
-                    store_longitude: *lon,
-                    similarity_score: similarity,
-                })
+                let mut matched = product.clone();
+                matched.similarity_score = similarity;
+                Some(matched)
             } else {
                 None
             }
@@ -105,10 +97,10 @@ pub fn find_matching_products(
 /// Vector of top N cheapest matching products
 pub fn find_best_matches(
     search_term: &str,
-    products: &[(String, String, f64, String, String, String, f64, f64)],
+    products: &[Product],
     threshold: f64,
     top_n: usize,
-) -> Vec<ProductMatch> {
+) -> Vec<Product> {
     let mut matches = find_matching_products(search_term, products, threshold);
 
     // Sort by price ascending (cheapest first)
@@ -121,12 +113,52 @@ pub fn find_best_matches(
 mod tests {
     use super::*;
 
-    fn sample_products() -> Vec<(String, String, f64, String, String, String, f64, f64)> {
+    fn sample_products() -> Vec<Product> {
         vec![
-            ("Anchor Blue Milk 2L".to_string(), "Anchor".to_string(), 4.99, "PakNSave".to_string(), "Pak'n Save Albany".to_string(), "store1".to_string(), -36.7276, 174.7021),
-            ("Meadow Fresh Milk 2L".to_string(), "Meadow Fresh".to_string(), 5.49, "NewWorld".to_string(), "New World Mt Eden".to_string(), "store2".to_string(), -36.8762, 174.7567),
-            ("Anchor Lite Milk 1L".to_string(), "Anchor".to_string(), 3.29, "Woolworth".to_string(), "Countdown Auckland".to_string(), "store3".to_string(), -36.8485, 174.7633),
-            ("Bread Wholemeal 700g".to_string(), "Vogel's".to_string(), 4.50, "PakNSave".to_string(), "Pak'n Save Albany".to_string(), "store1".to_string(), -36.7276, 174.7021),
+            Product {
+                product_name: "Anchor Blue Milk 2L".to_string(),
+                brand: "Anchor".to_string(),
+                price: 4.99,
+                supermarket: "PakNSave".to_string(),
+                store_name: "Pak'n Save Albany".to_string(),
+                store_id: "store1".to_string(),
+                store_latitude: -36.7276,
+                store_longitude: 174.7021,
+                similarity_score: 0.0,
+            },
+            Product {
+                product_name: "Meadow Fresh Milk 2L".to_string(),
+                brand: "Meadow Fresh".to_string(),
+                price: 5.49,
+                supermarket: "NewWorld".to_string(),
+                store_name: "New World Mt Eden".to_string(),
+                store_id: "store2".to_string(),
+                store_latitude: -36.8762,
+                store_longitude: 174.7567,
+                similarity_score: 0.0,
+            },
+            Product {
+                product_name: "Anchor Lite Milk 1L".to_string(),
+                brand: "Anchor".to_string(),
+                price: 3.29,
+                supermarket: "Woolworth".to_string(),
+                store_name: "Countdown Auckland".to_string(),
+                store_id: "store3".to_string(),
+                store_latitude: -36.8485,
+                store_longitude: 174.7633,
+                similarity_score: 0.0,
+            },
+            Product {
+                product_name: "Bread Wholemeal 700g".to_string(),
+                brand: "Vogel's".to_string(),
+                price: 4.50,
+                supermarket: "PakNSave".to_string(),
+                store_name: "Pak'n Save Albany".to_string(),
+                store_id: "store1".to_string(),
+                store_latitude: -36.7276,
+                store_longitude: 174.7021,
+                similarity_score: 0.0,
+            },
         ]
     }
 
