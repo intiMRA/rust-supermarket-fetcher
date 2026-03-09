@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
-use crate::custom_types::size_unit_types::SizeUnit;
-use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::Category;
+use crate::supermarkets::size_unit_types::SizeUnit;
+use crate::supermarkets::supermarket_types::Supermarket;
+use crate::supermarkets::models::category::Category;
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]

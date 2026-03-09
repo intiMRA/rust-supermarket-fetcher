@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::custom_types::supermarket_types::Supermarket;
+use crate::supermarkets::supermarket_types::Supermarket;
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Category {

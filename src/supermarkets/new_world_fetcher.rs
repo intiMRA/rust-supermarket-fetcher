@@ -6,21 +6,21 @@ use serde_json::Value;
 use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
-use crate::models::category::{Category, find_trace, top_level_category_paths};
-use crate::models::store::{Store, StoresResponse};
-use crate::models::super_market_item::SuperMarketItem;
-use crate::models::token::Token;
-use crate::traits::food_stuff_common_trait::FoodStuffCommonsTrait;
-use crate::traits::logger_trait::LoggerTrait;
-use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
+use crate::supermarkets::models::category::{Category, find_trace, top_level_category_paths};
+use crate::supermarkets::models::store::{Store, StoresResponse};
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::token::Token;
+use crate::supermarkets::food_stuff::food_stuff_common_trait::FoodStuffCommonsTrait;
+use crate::loggers::logger_trait::LoggerTrait;
+use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
-const DEFAULT_STORE_ID: &str = "21ecaaed-0749-4492-985e-4bb7ba43d59c";
+const DEFAULT_STORE_ID: &str = "60928d93-06fa-4d8f-92a6-8c359e7e846d";
 
 // -----------------------------------------------------------------------------
 // Struct Definition
 // -----------------------------------------------------------------------------
 
-pub struct PackNSaveFetcher<L: LoggerTrait, C: FoodStuffCommonsTrait> {
+pub struct NewWorldFetcher<L: LoggerTrait, C: FoodStuffCommonsTrait> {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
@@ -32,7 +32,7 @@ pub struct PackNSaveFetcher<L: LoggerTrait, C: FoodStuffCommonsTrait> {
 // Constructor
 // -----------------------------------------------------------------------------
 
-impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L,C> {
     pub fn new(logger: L, commons: C) -> Self {
         Self {
             client: Client::new(),
@@ -48,7 +48,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
 // Category Helpers
 // -----------------------------------------------------------------------------
 
-impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L, C> {
     async fn get_category_trace(
         &mut self,
         category_name: &str,
@@ -66,7 +66,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
 const REQUEST_DELAY_MS: u64 = 100;
 const MAX_RETRIES: u32 = 3;
 
-impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L,C> {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L, C> {
     fn is_rate_limited(status: u16) -> bool {
         matches!(status, 429 | 403 | 503)
     }
@@ -104,7 +104,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L,C> {
             let response = loop {
                 let result = self
                     .client
-                    .post("https://api-prod.paknsave.co.nz/v1/edge/search/paginated/products")
+                    .post("https://api-prod.newworld.co.nz/v1/edge/search/paginated/products")
                     .headers(headers.clone())
                     .json(&body)
                     .send()
@@ -164,7 +164,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L,C> {
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackNSaveFetcher<L,C> {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for NewWorldFetcher<L, C> {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {
@@ -179,7 +179,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackN
         let response = loop {
             let result = self
                 .client
-                .post("https://www.paknsave.co.nz/api/user/get-current-user")
+                .post("https://www.newworld.co.nz/api/user/get-current-user")
                 .headers(headers.clone())
                 .send()
                 .await;
@@ -218,7 +218,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackN
         let response = loop {
             let result = self
                 .client
-                .get("https://api-prod.paknsave.co.nz/v1/edge/store")
+                .get("https://api-prod.newworld.co.nz/v1/edge/store")
                 .headers(headers.clone())
                 .send()
                 .await;
@@ -256,7 +256,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackN
         let headers = self.commons.build_headers(token);
 
         let url = format!(
-            "https://api-prod.paknsave.co.nz/v1/edge/store/{}/categories",
+            "https://api-prod.newworld.co.nz/v1/edge/store/{}/categories",
             store_id
         );
         let mut retry_count = 0;

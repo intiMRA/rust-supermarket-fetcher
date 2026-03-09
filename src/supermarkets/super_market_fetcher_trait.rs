@@ -1,9 +1,9 @@
 use crate::custom_types::error::FetchError;
-use crate::models::super_market_item::SuperMarketItem;
-use crate::models::category::Category;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::category::Category;
 use async_trait::async_trait;
-use crate::models::store::Store;
-use crate::models::token::Token;
+use crate::supermarkets::models::store::Store;
+use crate::supermarkets::models::token::Token;
 
 #[async_trait]
 pub trait SuperMarketFetcherTrait: Send + Sync {

@@ -1,11 +1,11 @@
-use crate::custom_types::supermarket_types::Supermarket;
+use crate::supermarkets::supermarket_types::Supermarket;
 use crate::database::{Database, Repository};
-use crate::fetchers::food_stuff::food_stuff_commons::FoodStuff;
-use crate::fetchers::new_world_fetcher::NewWorldFetcher;
-use crate::fetchers::pack_n_save_fetcher::PackNSaveFetcher;
-use crate::fetchers::woolworth_fetcher::WoolworthFetcher;
-use crate::logger::Logger;
-use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
+use crate::supermarkets::food_stuff::food_stuff_commons::FoodStuff;
+use crate::supermarkets::new_world_fetcher::NewWorldFetcher;
+use crate::supermarkets::pack_n_save_fetcher::PackNSaveFetcher;
+use crate::supermarkets::woolworth_fetcher::WoolworthFetcher;
+use crate::loggers::logger::Logger;
+use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
 pub struct FetchController {
     woolworth_fetcher: Box<dyn SuperMarketFetcherTrait>,
@@ -90,7 +90,7 @@ impl FetchController {
         println!("[Woolworths] Fetching items...");
 
         // Woolworths uses a default store since prices are uniform
-        let woolworth_store = crate::models::store::Store {
+        let woolworth_store = crate::supermarkets::models::store::Store {
             id: "default".to_string(),
             name: "Woolworths (All Stores)".to_string(),
             address: String::new(),

@@ -2,12 +2,12 @@ use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde_json::Value;
 
-use crate::custom_types::size_unit_types::SizeUnit;
-use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::Category;
-use crate::models::super_market_item::SuperMarketItem;
-use crate::models::token::Token;
-use crate::traits::food_stuff_common_trait::FoodStuffCommonsTrait;
+use crate::supermarkets::size_unit_types::SizeUnit;
+use crate::supermarkets::supermarket_types::Supermarket;
+use crate::supermarkets::models::category::Category;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::token::Token;
+use crate::supermarkets::food_stuff::food_stuff_common_trait::FoodStuffCommonsTrait;
 
 pub struct FoodStuff {
     referer: &'static str,

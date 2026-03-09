@@ -1,8 +1,8 @@
 use rusqlite::params;
 use super::Database;
-use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::store::Store;
-use crate::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::supermarket_types::Supermarket;
+use crate::supermarkets::models::store::Store;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
 
 /// Repository for database operations.
 ///

@@ -1,10 +1,10 @@
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::Category;
-use crate::models::super_market_item::SuperMarketItem;
-use crate::models::token::Token;
+use crate::supermarkets::supermarket_types::Supermarket;
+use crate::supermarkets::models::category::Category;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::token::Token;
 
 pub trait FoodStuffCommonsTrait: Send + Sync {
     fn supermarket(&self) -> Supermarket;

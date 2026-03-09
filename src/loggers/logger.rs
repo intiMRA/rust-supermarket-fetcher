@@ -1,4 +1,4 @@
-use crate::traits::logger_trait::LoggerTrait;
+use crate::loggers::logger_trait::LoggerTrait;
 
 pub struct Logger {
     prefix: String,

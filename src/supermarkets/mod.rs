@@ -3,3 +3,7 @@ pub mod woolworth_fetcher;
 pub mod new_world_fetcher;
 pub mod pack_n_save_fetcher;
 pub mod food_stuff;
+pub mod super_market_fetcher_trait;
+pub mod models;
+pub mod supermarket_types;
+pub mod size_unit_types;

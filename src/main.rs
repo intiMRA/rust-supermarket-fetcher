@@ -3,19 +3,17 @@ use tokio::sync::Mutex;
 use actix_web::{web, App, HttpServer};
 
 use crate::api::handlers::AppState;
-use crate::database::{Database, run_sample_queries};
-use crate::fetchers::fetch_controller::FetchController;
+use crate::database::{run_sample_queries, Database};
+use crate::supermarkets::fetch_controller::FetchController;
 
 pub mod api;
 pub mod custom_types;
 pub mod database;
-pub mod fetchers;
-pub mod logger;
+pub mod supermarkets;
 pub mod matching;
-pub mod models;
-pub mod traits;
 pub mod services;
 pub mod utils;
+pub mod loggers;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

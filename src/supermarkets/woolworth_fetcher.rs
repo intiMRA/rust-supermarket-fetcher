@@ -6,14 +6,14 @@ use serde_json::Value;
 use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
-use crate::custom_types::size_unit_types::SizeUnit;
-use crate::custom_types::supermarket_types::Supermarket;
-use crate::models::category::{Category, find_trace, top_level_category_paths};
-use crate::traits::logger_trait::LoggerTrait;
-use crate::models::store::Store;
-use crate::models::super_market_item::SuperMarketItem;
-use crate::models::token::Token;
-use crate::traits::super_market_fetcher_trait::SuperMarketFetcherTrait;
+use crate::supermarkets::size_unit_types::SizeUnit;
+use crate::supermarkets::supermarket_types::Supermarket;
+use crate::supermarkets::models::category::{Category, find_trace, top_level_category_paths};
+use crate::loggers::logger_trait::LoggerTrait;
+use crate::supermarkets::models::store::Store;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::token::Token;
+use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
 
 // -----------------------------------------------------------------------------
 // Category Parsing Helpers
