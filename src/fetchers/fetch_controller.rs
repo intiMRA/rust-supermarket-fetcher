@@ -41,11 +41,11 @@ impl FetchController {
         // Fetch from NewWorld
         let new_world_stores = self.new_world_fetcher.get_stores().await.unwrap();
         let num_stores = new_world_stores.len();
-        for (i, store) in new_world_stores.iter().enumerate() {
+        for (i, store) in new_world_stores.into_iter().enumerate() {
             println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
 
             // Insert store into database
-            repo.insert_store(store, Supermarket::NewWorld)
+            repo.insert_store(&store, Supermarket::NewWorld)
                 .expect("Failed to insert store");
 
             // Fetch and insert items
@@ -65,11 +65,11 @@ impl FetchController {
         // Fetch from PackNSave
         let pack_n_save_stores = self.pack_n_save_fetcher.get_stores().await.unwrap();
         let num_stores = pack_n_save_stores.len();
-        for (i, store) in pack_n_save_stores.iter().enumerate() {
+        for (i, store) in pack_n_save_stores.into_iter().enumerate() {
             println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
 
             // Insert store into database
-            repo.insert_store(store, Supermarket::PakNSave)
+            repo.insert_store(&store, Supermarket::PakNSave)
                 .expect("Failed to insert store");
 
             // Fetch and insert items

@@ -72,7 +72,7 @@ impl FoodStuffCommonsTrait for FoodStuff {
 
     fn build_category_filter(&self, store_id: &str, category_path: &[String]) -> String {
         let mut filter = format!("stores:{}", store_id);
-        for (i, category) in category_path.iter().enumerate() {
+        for (i, category) in category_path.into_iter().enumerate() {
             filter.push_str(&format!(" AND category{}{}:\"{}\"", i, self.category_suffix, category));
         }
         filter

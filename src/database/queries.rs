@@ -437,8 +437,8 @@ pub struct ProductResult {
     pub name: String,
     pub supermarket: String,
     pub brand: String,
-    pub size_value: Option<f64>,
-    pub size_unit: Option<String>,
+    pub size_value: f64,
+    pub size_unit: String,
     pub category: String,
 }
 
@@ -515,7 +515,7 @@ pub fn run_sample_queries(db: &Database) {
     println!("│ 3. SEARCH: \"Chicken Breast\" (first 10)                           │");
     println!("└──────────────────────────────────────────────────────────────────┘");
     let products = queries.search_products("Chicken Breast");
-    for p in products.iter().take(10) {
+    for p in products.into_iter().take(10) {
         println!("  {} | {} | {}", p.name, p.supermarket, p.brand);
     }
     println!();
@@ -525,7 +525,7 @@ pub fn run_sample_queries(db: &Database) {
     println!("│ 4. PRICE RANGE: \"Anchor Milk\" across stores                      │");
     println!("└──────────────────────────────────────────────────────────────────┘");
     let prices = queries.get_price_range("Anchor Milk");
-    for p in prices.iter().take(10) {
+    for p in prices.into_iter().take(10) {
         let savings = p.max_price - p.min_price;
         println!(
             "  {} | {} | ${:.2} - ${:.2} ({} stores) [Save ${:.2}]",
@@ -552,7 +552,7 @@ pub fn run_sample_queries(db: &Database) {
     println!("│ 6. BRAND SEARCH: \"Whittaker\" products                            │");
     println!("└──────────────────────────────────────────────────────────────────┘");
     let brand_products = queries.get_products_by_brand("Whittaker");
-    for p in brand_products.iter().take(10) {
+    for p in brand_products.into_iter().take(10) {
         println!(
             "  {} | {} | ${:.2} - ${:.2}",
             p.name, p.supermarket, p.min_price, p.max_price

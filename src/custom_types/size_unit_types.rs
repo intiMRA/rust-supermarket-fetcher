@@ -45,7 +45,7 @@ impl SizeUnit {
     /// Useful for storing in database columns.
     ///
     /// # Returns
-    /// A tuple of (value, unit_name) where both are optional strings.
+    /// A tuple of (value, unit_name) where both are strings.
     pub fn to_value_and_unit(&self) -> (f64, &str) {
         match self {
             SizeUnit::Kilogram(v) => (*v, "Kilogram"),

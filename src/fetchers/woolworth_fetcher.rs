@@ -171,7 +171,7 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
         // Build dasFilter parameters based on path depth
         let mut filters = String::new();
         let filter_types = ["Department", "Aisle", "Shelf"];
-        for (i, cat) in category_path.iter().enumerate() {
+        for (i, cat) in category_path.into_iter().enumerate() {
             if i < filter_types.len() {
                 filters.push_str(&format!(
                     "&dasFilter={}%3B%3B{}%3Bfalse",

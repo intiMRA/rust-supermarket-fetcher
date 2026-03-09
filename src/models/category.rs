@@ -54,15 +54,15 @@ impl Category {
 }
 
 pub fn flatten_categories(categories: &[Category]) -> Vec<String> {
-    categories.iter().flat_map(|c| c.flatten()).collect()
+    categories.into_iter().flat_map(|c| c.flatten()).collect()
 }
 
 pub fn leaf_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
-    categories.iter().flat_map(|c| c.leaf_paths(&[])).collect()
+    categories.into_iter().flat_map(|c| c.leaf_paths(&[])).collect()
 }
 
 pub fn top_level_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
-    categories.iter().map(|c| vec![c.slug.clone()]).collect()
+    categories.into_iter().map(|c| vec![c.slug.clone()]).collect()
 }
 
 pub fn find_trace(categories: &[Category], name: &str) -> Vec<String> {

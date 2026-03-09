@@ -65,7 +65,7 @@ pub fn find_matching_products(
     threshold: f64,
 ) -> Vec<Product> {
     let mut matches: Vec<Product> = products
-        .iter()
+        .into_iter()
         .filter_map(|product| {
             let similarity = calculate_similarity(search_term, product.product_name.as_str());
 
