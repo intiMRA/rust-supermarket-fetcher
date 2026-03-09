@@ -16,14 +16,14 @@ pub struct FetchController {
 impl FetchController {
     pub fn new() -> Self {
         Self {
-            woolworth_fetcher: Box::new(WoolworthFetcher::new(Box::new(Logger::new("Woolworths")))),
+            woolworth_fetcher: Box::new(WoolworthFetcher::new(Logger::new("Woolworths"))),
             new_world_fetcher: Box::new(NewWorldFetcher::new(
-                Box::new(Logger::new("NewWorld")),
-                Box::new(FoodStuff::new_world()),
+                Logger::new("NewWorld"),
+                FoodStuff::new_world(),
             )),
             pack_n_save_fetcher: Box::new(PackNSaveFetcher::new(
-                Box::new(Logger::new("PackNSave")),
-                Box::new(FoodStuff::pack_n_save()),
+                Logger::new("PackNSave"),
+                FoodStuff::pack_n_save(),
             )),
         }
     }

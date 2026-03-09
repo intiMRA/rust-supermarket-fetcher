@@ -65,18 +65,18 @@ fn parse_aisles(facets: &Value) -> Vec<Category> {
 // Struct Definition
 // -----------------------------------------------------------------------------
 
-pub struct WoolworthFetcher {
+pub struct WoolworthFetcher<L: LoggerTrait> {
     client: Client,
     categories: Option<Vec<Category>>,
-    logger: Box<dyn LoggerTrait>,
+    logger: L,
 }
 
 // -----------------------------------------------------------------------------
 // Constructor & HTTP Helpers
 // -----------------------------------------------------------------------------
 
-impl WoolworthFetcher {
-    pub fn new(logger: Box<dyn LoggerTrait>) -> Self {
+impl<L: LoggerTrait> WoolworthFetcher<L> {
+    pub fn new(logger: L) -> Self {
         Self {
             client: Client::new(),
             categories: None,
@@ -114,7 +114,7 @@ impl WoolworthFetcher {
 // Category Helpers
 // -----------------------------------------------------------------------------
 
-impl WoolworthFetcher {
+impl<L: LoggerTrait> WoolworthFetcher<L> {
     async fn get_category_trace(
         &mut self,
         category_name: &str,
@@ -132,7 +132,7 @@ impl WoolworthFetcher {
 const REQUEST_DELAY_MS: u64 = 100;
 const MAX_RETRIES: u32 = 3;
 
-impl WoolworthFetcher {
+impl<L: LoggerTrait> WoolworthFetcher<L> {
     fn is_rate_limited(status: u16) -> bool {
         matches!(status, 429 | 403 | 503)
     }
@@ -283,7 +283,7 @@ impl WoolworthFetcher {
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherTrait for WoolworthFetcher {
+impl<L: LoggerTrait + Send + Sync> SuperMarketFetcherTrait for WoolworthFetcher<L> {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {

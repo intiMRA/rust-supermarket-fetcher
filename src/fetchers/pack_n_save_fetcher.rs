@@ -20,20 +20,20 @@ const DEFAULT_STORE_ID: &str = "21ecaaed-0749-4492-985e-4bb7ba43d59c";
 // Struct Definition
 // -----------------------------------------------------------------------------
 
-pub struct PackNSaveFetcher {
+pub struct PackNSaveFetcher<L: LoggerTrait, C: FoodStuffCommonsTrait> {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
-    logger: Box<dyn LoggerTrait>,
-    commons: Box<dyn FoodStuffCommonsTrait>,
+    logger: L,
+    commons: C,
 }
 
 // -----------------------------------------------------------------------------
 // Constructor
 // -----------------------------------------------------------------------------
 
-impl PackNSaveFetcher {
-    pub fn new(logger: Box<dyn LoggerTrait>, commons: Box<dyn FoodStuffCommonsTrait>) -> Self {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
+    pub fn new(logger: L, commons: C) -> Self {
         Self {
             client: Client::new(),
             token: None,
@@ -48,7 +48,7 @@ impl PackNSaveFetcher {
 // Category Helpers
 // -----------------------------------------------------------------------------
 
-impl PackNSaveFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
     async fn get_category_trace(
         &mut self,
         category_name: &str,
@@ -66,7 +66,7 @@ impl PackNSaveFetcher {
 const REQUEST_DELAY_MS: u64 = 100;
 const MAX_RETRIES: u32 = 3;
 
-impl PackNSaveFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L,C> {
     fn is_rate_limited(status: u16) -> bool {
         matches!(status, 429 | 403 | 503)
     }
@@ -164,7 +164,7 @@ impl PackNSaveFetcher {
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherTrait for PackNSaveFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackNSaveFetcher<L,C> {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {

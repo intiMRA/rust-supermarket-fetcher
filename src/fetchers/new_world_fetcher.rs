@@ -20,20 +20,20 @@ const DEFAULT_STORE_ID: &str = "60928d93-06fa-4d8f-92a6-8c359e7e846d";
 // Struct Definition
 // -----------------------------------------------------------------------------
 
-pub struct NewWorldFetcher {
+pub struct NewWorldFetcher<L: LoggerTrait, C: FoodStuffCommonsTrait> {
     client: Client,
     token: Option<Token>,
     categories: Option<Vec<Category>>,
-    logger: Box<dyn LoggerTrait>,
-    commons: Box<dyn FoodStuffCommonsTrait>,
+    logger: L,
+    commons: C,
 }
 
 // -----------------------------------------------------------------------------
 // Constructor
 // -----------------------------------------------------------------------------
 
-impl NewWorldFetcher {
-    pub fn new(logger: Box<dyn LoggerTrait>, commons: Box<dyn FoodStuffCommonsTrait>) -> Self {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L,C> {
+    pub fn new(logger: L, commons: C) -> Self {
         Self {
             client: Client::new(),
             token: None,
@@ -48,7 +48,7 @@ impl NewWorldFetcher {
 // Category Helpers
 // -----------------------------------------------------------------------------
 
-impl NewWorldFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L, C> {
     async fn get_category_trace(
         &mut self,
         category_name: &str,
@@ -66,7 +66,7 @@ impl NewWorldFetcher {
 const REQUEST_DELAY_MS: u64 = 100;
 const MAX_RETRIES: u32 = 3;
 
-impl NewWorldFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>NewWorldFetcher<L, C> {
     fn is_rate_limited(status: u16) -> bool {
         matches!(status, 429 | 403 | 503)
     }
@@ -164,7 +164,7 @@ impl NewWorldFetcher {
 // -----------------------------------------------------------------------------
 
 #[async_trait]
-impl SuperMarketFetcherTrait for NewWorldFetcher {
+impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for NewWorldFetcher<L, C> {
     // --- Authentication ---
 
     async fn get_auth(&self) -> Result<Option<Token>, FetchError> {
