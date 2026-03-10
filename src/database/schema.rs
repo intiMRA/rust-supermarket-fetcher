@@ -79,6 +79,15 @@ const CREATE_TABLES: &str = r#"
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+
+    -- FTS5 full-text search index for products
+    -- Combines product name and brand for better matching
+    CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+        name,
+        brand,
+        content='',           -- External content (we manage sync manually)
+        contentless_delete=1  -- Allow deletions
+    );
 "#;
 
 /// Initialize the database schema.

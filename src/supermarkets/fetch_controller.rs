@@ -1,117 +1,148 @@
+use crate::custom_types::error::FetchError;
 use crate::supermarkets::supermarket_types::Supermarket;
 use crate::database::{Database, Repository};
 use crate::supermarkets::food_stuff::food_stuff_commons::FoodStuff;
 use crate::supermarkets::new_world_fetcher::NewWorldFetcher;
 use crate::supermarkets::pack_n_save_fetcher::PackNSaveFetcher;
 use crate::supermarkets::woolworth_fetcher::WoolworthFetcher;
-use crate::loggers::logger::Logger;
 use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
+use crate::loggers::logger::Logger;
+use crate::loggers::parse_logger::clear_parse_log;
+use crate::supermarkets::models::super_market_item::SuperMarketItem;
+use crate::supermarkets::models::store::Store;
 
-pub struct FetchController {
-    woolworth_fetcher: Box<dyn SuperMarketFetcherTrait>,
-    new_world_fetcher: Box<dyn SuperMarketFetcherTrait>,
-    pack_n_save_fetcher: Box<dyn SuperMarketFetcherTrait>,
+/// Result of fetching from a supermarket
+struct FetchResult {
+    supermarket: Supermarket,
+    store: Store,
+    items: Vec<SuperMarketItem>,
 }
+
+pub struct FetchController;
 
 impl FetchController {
     pub fn new() -> Self {
-        Self {
-            woolworth_fetcher: Box::new(WoolworthFetcher::new(Logger::new("Woolworths"))),
-            new_world_fetcher: Box::new(NewWorldFetcher::new(
-                Logger::new("NewWorld"),
-                FoodStuff::new_world(),
-            )),
-            pack_n_save_fetcher: Box::new(PackNSaveFetcher::new(
-                Logger::new("PackNSave"),
-                FoodStuff::pack_n_save(),
-            )),
-        }
+        Self
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&self) {
         // Create data directory if it doesn't exist
         tokio::fs::create_dir_all("data").await.unwrap();
+
+        // Clear parse warnings log for this run
+        clear_parse_log();
 
         // Open database
         let db = Database::open("data/supermarket.db").expect("Failed to open database");
         let repo = Repository::new(&db);
 
         println!("Database opened: data/supermarket.db");
+        println!("Parse warnings will be logged to: data/parse_warnings.log");
 
-        // Fetch from NewWorld
-        let new_world_stores = self.new_world_fetcher.get_stores().await.unwrap();
-        let num_stores = new_world_stores.len();
-        for (i, store) in new_world_stores.into_iter().enumerate() {
-            println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+        // Fetch all supermarkets in parallel (network I/O)
+        // Each task owns its own fetcher - no shared state, no mutex needed
+        let (woolworth_result, new_world_result, pack_n_save_result) = tokio::join!(
+            Self::fetch_woolworth(),
+            Self::fetch_new_world(),
+            Self::fetch_pack_n_save(),
+        );
 
-            // Insert store into database
-            repo.insert_store(&store, Supermarket::NewWorld)
-                .expect("Failed to insert store");
-
-            // Fetch and insert items
-            let items = self.new_world_fetcher
-                .get_items(Some(store.id.as_str()))
-                .await
-                .unwrap();
-
-            for item in &items {
-                repo.insert_item_with_price(item, &store.id)
-                    .expect("Failed to insert item");
+        // Write to database sequentially (prevents race conditions)
+        // SQLite only allows one writer at a time anyway
+        // Each store's items are inserted within a single transaction for performance
+        let fetch_results = [woolworth_result, new_world_result, pack_n_save_result];
+        for fetch_result in fetch_results {
+            if let Ok(results) = fetch_result {
+                for result in results {
+                    repo.insert_items_for_store(&result.store, result.supermarket, &result.items)
+                        .expect("Failed to insert items for store");
+                    println!("[{:?}] Inserted {} items for {}", result.supermarket, result.items.len(), result.store.name);
+                }
             }
-
-            println!("[NewWorld] Inserted {} items for {}", items.len(), store.name);
         }
 
-        // Fetch from PackNSave
-        let pack_n_save_stores = self.pack_n_save_fetcher.get_stores().await.unwrap();
-        let num_stores = pack_n_save_stores.len();
-        for (i, store) in pack_n_save_stores.into_iter().enumerate() {
-            println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+        println!("\nFetch complete! Data saved to data/supermarket.db");
+    }
 
-            // Insert store into database
-            repo.insert_store(&store, Supermarket::PakNSave)
-                .expect("Failed to insert store");
-
-            // Fetch and insert items
-            let items = self.pack_n_save_fetcher
-                .get_items(Some(store.id.as_str()))
-                .await
-                .unwrap();
-
-            for item in &items {
-                repo.insert_item_with_price(item, &store.id)
-                    .expect("Failed to insert item");
-            }
-
-            println!("[PakNSave] Inserted {} items for {}", items.len(), store.name);
-        }
-
-        // Fetch from Woolworths (single store, uniform pricing)
+    async fn fetch_woolworth() -> Result<Vec<FetchResult>, FetchError> {
         println!("[Woolworths] Fetching items...");
 
-        // Woolworths uses a default store since prices are uniform
-        let woolworth_store = crate::supermarkets::models::store::Store {
+        // Each task creates its own fetcher - no sharing, no mutex
+        let mut fetcher = WoolworthFetcher::new(Logger::new("Woolworths"));
+
+        let woolworth_store = Store {
             id: "default".to_string(),
             name: "Woolworths (All Stores)".to_string(),
             address: String::new(),
             latitude: 0.0,
             longitude: 0.0,
         };
-        repo.insert_store(&woolworth_store, Supermarket::Woolworth)
-            .expect("Failed to insert Woolworths store");
 
-        let items = self.woolworth_fetcher
-            .get_items(None)
-            .await
-            .unwrap();
+        let items = fetcher.get_items(None).await?;
 
-        for item in &items {
-            repo.insert_item_with_price(item, "default")
-                .expect("Failed to insert item");
+        println!("[Woolworths] Fetched {} items", items.len());
+
+        Ok(vec![FetchResult {
+            supermarket: Supermarket::Woolworth,
+            store: woolworth_store,
+            items,
+        }])
+    }
+
+    async fn fetch_new_world() -> Result<Vec<FetchResult>, FetchError> {
+        // Each task creates its own fetcher - no sharing, no mutex
+        let mut fetcher = NewWorldFetcher::new(
+            Logger::new("NewWorld"),
+            FoodStuff::new_world(),
+        );
+
+        let stores = fetcher.get_stores().await?;
+        let num_stores = stores.len();
+        let mut results = Vec::new();
+
+        for (i, store) in stores.into_iter().enumerate() {
+            println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+
+            let items = fetcher.get_items(Some(store.id.as_str())).await?;
+
+            println!("[NewWorld] Fetched {} items for {}", items.len(), store.name);
+
+            results.push(FetchResult {
+                supermarket: Supermarket::NewWorld,
+                store,
+                items,
+            });
         }
 
-        println!("[Woolworths] Inserted {} items", items.len());
-        println!("\nFetch complete! Data saved to data/supermarket.db");
+        Ok(results)
+    }
+
+    async fn fetch_pack_n_save() -> Result<Vec<FetchResult>, FetchError> {
+        // Each task creates its own fetcher - no sharing, no mutex
+        let mut fetcher = PackNSaveFetcher::new(
+            Logger::new("PackNSave"),
+            FoodStuff::pack_n_save(),
+        );
+
+        let stores = fetcher.get_stores().await?;
+        let num_stores = stores.len();
+        let mut results = Vec::new();
+
+        for (i, store) in stores.into_iter().enumerate() {
+            println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+
+            let items = fetcher.get_items(Some(store.id.as_str())).await?;
+
+            println!("[PakNSave] Fetched {} items for {}", items.len(), store.name);
+
+            results.push(FetchResult {
+                supermarket: Supermarket::PakNSave,
+                store,
+                items,
+            });
+        }
+
+        Ok(results)
     }
 }
 

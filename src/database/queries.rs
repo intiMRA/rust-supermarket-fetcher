@@ -182,6 +182,117 @@ impl<'a> Queries<'a> {
     // Category Queries
     // -------------------------------------------------------------------------
 
+    /// Find category IDs where the search term matches the category slug.
+    ///
+    /// Matching strategy (in priority order):
+    /// 1. Exact slug match: "butter" → "Butter"
+    /// 2. "Fresh X" pattern: "milk" → "Fresh Milk" (base product)
+    /// 3. Slug ends with search term: "milk" → "UHT Milk"
+    ///
+    /// Returns only the highest priority matches found.
+    pub fn find_matching_category_ids(&self, search_term: &str) -> Vec<i64> {
+        let search_lower = search_term.to_lowercase();
+
+        // Priority 1: Exact slug match
+        // "butter" → "Butter", "fresh milk" → "Fresh Milk"
+        let mut stmt = self.db.conn.prepare(
+            "SELECT DISTINCT id FROM categories WHERE LOWER(slug) = ?1"
+        ).unwrap();
+
+        let rows = stmt.query_map(params![search_lower], |row| row.get(0)).unwrap();
+        let exact_matches: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+
+        if !exact_matches.is_empty() {
+            return exact_matches;
+        }
+
+        // Priority 2: "Fresh X" pattern - base products
+        // "milk" → "Fresh Milk"
+        let mut stmt = self.db.conn.prepare(
+            "SELECT DISTINCT id FROM categories WHERE LOWER(slug) = ?1"
+        ).unwrap();
+
+        let fresh_pattern = format!("fresh {}", search_lower);
+        let rows = stmt.query_map(params![fresh_pattern], |row| row.get(0)).unwrap();
+        let fresh_matches: Vec<i64> = rows.filter_map(|r| r.ok()).collect();
+
+        if !fresh_matches.is_empty() {
+            return fresh_matches;
+        }
+
+        // Priority 3: Slug ends with search term (as complete word)
+        let mut stmt = self.db.conn.prepare(
+            "SELECT DISTINCT id FROM categories WHERE LOWER(slug) LIKE ?1"
+        ).unwrap();
+
+        let pattern_ends = format!("% {}", search_lower);
+        let rows = stmt.query_map(params![pattern_ends], |row| row.get(0)).unwrap();
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// Search for products in specific categories, filtered by store IDs.
+    pub fn search_products_in_categories_and_stores(
+        &self,
+        category_ids: &[i64],
+        store_ids: &[String],
+    ) -> Vec<ProductWithPriceAndStore> {
+        if category_ids.is_empty() || store_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // Build IN clause for category IDs
+        let category_placeholders: Vec<String> = category_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let category_in_clause = category_placeholders.join(", ");
+
+        // Build IN clause for store IDs
+        let store_placeholders: Vec<String> = store_ids
+            .iter()
+            .map(|id| format!("'{}'", id.replace('\'', "''")))
+            .collect();
+        let store_in_clause = store_placeholders.join(", ");
+
+        let query = format!(
+            "SELECT p.name, COALESCE(b.name, ''), pr.price, s.name, st.id, p.supermarket_id,
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+             FROM products p
+             JOIN supermarkets s ON p.supermarket_id = s.id
+             LEFT JOIN brands b ON p.brand_id = b.id
+             JOIN prices pr ON p.id = pr.product_id
+             JOIN stores st ON pr.store_id = st.id
+             WHERE p.category_id IN ({})
+             AND st.id IN ({})
+             AND pr.fetched_at = (
+                 SELECT MAX(pr2.fetched_at)
+                 FROM prices pr2
+                 WHERE pr2.product_id = pr.product_id AND pr2.store_id = pr.store_id
+             )
+             ORDER BY pr.price ASC
+             LIMIT 500",
+            category_in_clause, store_in_clause
+        );
+
+        let mut stmt = self.db.conn.prepare(&query).unwrap();
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ProductWithPriceAndStore {
+                product_name: row.get(0)?,
+                brand: row.get(1)?,
+                price: row.get(2)?,
+                supermarket: row.get(3)?,
+                store_id: row.get(4)?,
+                supermarket_id: row.get(5)?,
+                store_name: row.get(6)?,
+                store_latitude: row.get(7)?,
+                store_longitude: row.get(8)?,
+            })
+        }).unwrap();
+
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
     /// Get products by category.
     pub fn get_products_by_category(&self, category: &str, limit: u32) -> Vec<ProductResult> {
         let mut stmt = self.db.conn.prepare(
@@ -426,6 +537,90 @@ impl<'a> Queries<'a> {
         rows.filter_map(|r| r.ok()).collect()
     }
 
+    // -------------------------------------------------------------------------
+    // BM25 Full-Text Search
+    // -------------------------------------------------------------------------
+
+    /// Search for products using FTS5 BM25 ranking.
+    ///
+    /// BM25 is a keyword-based ranking algorithm that:
+    /// - Strongly prefers exact word matches
+    /// - Weights term frequency and document length
+    /// - Better at "milk" → "Fresh Milk" over "Chocolate Milk"
+    ///
+    /// Returns products with their BM25 score (lower = better match).
+    pub fn search_products_bm25(
+        &self,
+        search_term: &str,
+        store_ids: &[String],
+        limit: usize,
+    ) -> Vec<ProductWithBm25Score> {
+        if store_ids.is_empty() || search_term.trim().is_empty() {
+            return Vec::new();
+        }
+
+        // Build IN clause for store IDs
+        let store_placeholders: Vec<String> = store_ids
+            .iter()
+            .map(|id| format!("'{}'", id.replace('\'', "''")))
+            .collect();
+        let store_in_clause = store_placeholders.join(", ");
+
+        // FTS5 query: exact word matching (no prefix wildcards)
+        // This prevents "butter" from matching "Buttercup" or "Butternut"
+        // bm25() returns negative scores, more negative = better match
+        let fts_query = search_term
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let query = format!(
+            "SELECT p.id, p.name, COALESCE(b.name, ''), pr.price, s.name, st.id,
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0),
+                    bm25(products_fts) as bm25_score
+             FROM products_fts fts
+             JOIN products p ON fts.rowid = p.id
+             JOIN supermarkets s ON p.supermarket_id = s.id
+             LEFT JOIN brands b ON p.brand_id = b.id
+             JOIN prices pr ON p.id = pr.product_id
+             JOIN stores st ON pr.store_id = st.id
+             WHERE products_fts MATCH ?1
+             AND st.id IN ({})
+             AND pr.fetched_at = (
+                 SELECT MAX(pr2.fetched_at)
+                 FROM prices pr2
+                 WHERE pr2.product_id = pr.product_id AND pr2.store_id = pr.store_id
+             )
+             ORDER BY bm25_score
+             LIMIT ?2",
+            store_in_clause
+        );
+
+        let mut stmt = match self.db.conn.prepare(&query) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(), // FTS table might not exist yet
+        };
+
+        let rows = stmt.query_map(params![fts_query, limit as i64], |row| {
+            Ok(ProductWithBm25Score {
+                product_id: row.get(0)?,
+                product_name: row.get(1)?,
+                brand: row.get(2)?,
+                price: row.get(3)?,
+                supermarket: row.get(4)?,
+                store_id: row.get(5)?,
+                store_name: row.get(6)?,
+                store_latitude: row.get(7)?,
+                store_longitude: row.get(8)?,
+                bm25_score: row.get(9)?,
+            })
+        });
+
+        match rows {
+            Ok(r) => r.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -476,6 +671,22 @@ pub struct ProductWithPrice {
     pub brand: String,
     pub min_price: f64,
     pub max_price: f64,
+}
+
+/// Product with BM25 relevance score from full-text search.
+#[derive(Debug, Clone)]
+pub struct ProductWithBm25Score {
+    pub product_id: i64,
+    pub product_name: String,
+    pub brand: String,
+    pub price: f64,
+    pub supermarket: String,
+    pub store_id: String,
+    pub store_name: String,
+    pub store_latitude: f64,
+    pub store_longitude: f64,
+    /// BM25 score (negative, more negative = better match)
+    pub bm25_score: f64,
 }
 
 // -----------------------------------------------------------------------------

@@ -15,39 +15,79 @@ pub struct Product {
     pub similarity_score: f64,
 }
 
-/// Calculate a combined similarity score using both substring matching and fuzzy matching.
+/// Calculate a combined similarity score using whole-word matching and fuzzy matching.
 ///
 /// Returns a score between 0.0 and 1.0 where:
-/// - 1.0 means exact match or search term is a substring of product name
-/// - Lower values indicate partial fuzzy matches
+/// - 1.0 means exact whole-word match
+/// - 0.95 means a word starts with the search term (e.g., "milk" matches "milks")
+/// - Lower values indicate fuzzy matches
+///
+/// Important: This uses whole-word matching to avoid false positives like
+/// "bread" matching "Shortbread" or "butter" matching "Buttercup".
 fn calculate_similarity(search_term: &str, product_name: &str) -> f64 {
     let search_lower = search_term.to_lowercase();
     let name_lower = product_name.to_lowercase();
 
-    // If search term is contained in product name, give high score
-    if name_lower.contains(&search_lower) {
-        // Score based on how much of the product name is the search term
-        let ratio = search_lower.len() as f64 / name_lower.len() as f64;
-        // Minimum 0.8 for substring matches, up to 1.0 for exact matches
-        return 0.8 + (ratio * 0.2);
+    // Split product name into words
+    let words: Vec<&str> = name_lower.split_whitespace().collect();
+
+    // Check for exact whole-word match
+    for word in &words {
+        if *word == search_lower {
+            return 1.0; // Exact word match
+        }
     }
 
-    // Check each word in the product name for fuzzy matching
-    let words: Vec<&str> = name_lower.split_whitespace().collect();
-    let mut best_word_score = 0.0;
-
+    // Check if any word starts with the search term
+    // Only allow if the extra suffix is just "s" or "es" (plurals)
     for word in &words {
-        let score = jaro_winkler(&search_lower, word);
+        if word.starts_with(&search_lower) && word.len() > search_lower.len() {
+            let suffix = &word[search_lower.len()..];
+            if suffix == "s" || suffix == "es" {
+                // Plural form is acceptable (e.g., "milk" -> "milks")
+                return 0.95;
+            } else {
+                // Other suffixes like "y", "cup", "bread" are likely different words
+                // e.g., "butter" -> "buttery", "buttercup"
+                return 0.4;
+            }
+        }
+    }
+
+    // Check if search term appears as a suffix of any word (e.g., "bread" in "shortbread")
+    for word in &words {
+        if word.ends_with(&search_lower) && word.len() > search_lower.len() {
+            return 0.4;
+        }
+    }
+
+    // Fall back to fuzzy matching on individual words
+    let mut best_word_score = 0.0;
+    for word in &words {
+        let base_score = jaro_winkler(&search_lower, word);
+
+        // Penalize if word is much longer than search term
+        let length_ratio = search_lower.len() as f64 / word.len() as f64;
+        let length_penalty = if length_ratio < 0.7 {
+            length_ratio
+        } else {
+            1.0
+        };
+
+        let score = base_score * length_penalty;
         if score > best_word_score {
             best_word_score = score;
         }
     }
 
-    // Also compare against the full name
-    let full_name_score = jaro_winkler(&search_lower, &name_lower);
+    // For full name comparison, only use if search term has multiple words
+    let search_word_count = search_lower.split_whitespace().count();
+    if search_word_count > 1 {
+        let full_name_score = jaro_winkler(&search_lower, &name_lower);
+        return best_word_score.max(full_name_score);
+    }
 
-    // Return the best score
-    best_word_score.max(full_name_score)
+    best_word_score
 }
 
 /// Find products that match the search term using fuzzy matching.
@@ -183,5 +223,42 @@ mod tests {
         assert_eq!(matches.len(), 2);
         // Should be sorted by price
         assert!(matches[0].price <= matches[1].price);
+    }
+
+    #[test]
+    fn test_whole_word_matching_bread() {
+        // "bread" should NOT match "Shortbread" (substring within word)
+        let score = calculate_similarity("bread", "Shortbread Cookies");
+        assert!(score < 0.8, "bread should not match Shortbread, got score: {}", score);
+
+        // "bread" SHOULD match "Bread Wholemeal"
+        let score = calculate_similarity("bread", "Bread Wholemeal 700g");
+        assert!(score >= 0.95, "bread should match Bread, got score: {}", score);
+    }
+
+    #[test]
+    fn test_whole_word_matching_butter() {
+        // "butter" should NOT match "Buttercup Pumpkin"
+        let score = calculate_similarity("butter", "Buttercup Pumpkin");
+        assert!(score < 0.8, "butter should not match Buttercup, got score: {}", score);
+
+        // "butter" should NOT match "Buttery Popcorn"
+        let score = calculate_similarity("butter", "Buttery Popcorn");
+        assert!(score < 0.8, "butter should not match Buttery, got score: {}", score);
+
+        // "butter" SHOULD match "Anchor Butter 500g"
+        let score = calculate_similarity("butter", "Anchor Butter 500g");
+        assert!(score >= 0.95, "butter should match Butter, got score: {}", score);
+    }
+
+    #[test]
+    fn test_whole_word_matching_milk() {
+        // "milk" should match "milks" (plural, close in length)
+        let score = calculate_similarity("milk", "Fresh Milks 2L");
+        assert!(score >= 0.9, "milk should match Milks, got score: {}", score);
+
+        // "milk" should match exact word
+        let score = calculate_similarity("milk", "Anchor Milk 2L");
+        assert_eq!(score, 1.0, "milk should exactly match Milk");
     }
 }

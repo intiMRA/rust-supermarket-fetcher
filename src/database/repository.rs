@@ -156,6 +156,13 @@ impl<'a> Repository<'a> {
             |row| row.get(0),
         )?;
 
+        // Sync to FTS index for full-text search
+        // Use INSERT OR REPLACE to handle re-indexing
+        self.db.conn.execute(
+            "INSERT OR REPLACE INTO products_fts (rowid, name, brand) VALUES (?1, ?2, ?3)",
+            params![id, item.name, item.brand_name],
+        )?;
+
         Ok(id)
     }
 
@@ -163,12 +170,24 @@ impl<'a> Repository<'a> {
     // Prices
     // -------------------------------------------------------------------------
 
-    /// Insert a price record for a product at a specific store.
+    /// Upsert a price record for a product at a specific store.
     ///
-    /// Uses INSERT OR IGNORE to skip duplicate prices (same product/store/timestamp).
+    /// If a price exists for this product/store within the last 5 days, updates it.
+    /// Otherwise creates a new entry (for weekly price history tracking).
     pub fn insert_price(&self, product_id: i64, store_id: &str, price: f64) -> rusqlite::Result<()> {
+        // Delete any existing price within the last 5 days (we'll replace it)
         self.db.conn.execute(
-            "INSERT OR IGNORE INTO prices (product_id, store_id, price) VALUES (?1, ?2, ?3)",
+            "DELETE FROM prices
+             WHERE product_id = ?1
+             AND store_id = ?2
+             AND fetched_at >= DATE('now', '-5 days')",
+            params![product_id, store_id],
+        )?;
+
+        // Insert the new price
+        self.db.conn.execute(
+            "INSERT INTO prices (product_id, store_id, price, fetched_at)
+             VALUES (?1, ?2, ?3, DATE('now'))",
             params![product_id, store_id, price],
         )?;
         Ok(())
@@ -179,12 +198,42 @@ impl<'a> Repository<'a> {
     // -------------------------------------------------------------------------
 
     /// Insert a supermarket item and its price at a specific store.
-    ///
-    /// This is the main method you'll use to import data.
-    pub fn insert_item_with_price(&self, item: &SuperMarketItem, store_id: &str) -> rusqlite::Result<()> {
+    fn insert_item_with_price(&self, item: &SuperMarketItem, store_id: &str) -> rusqlite::Result<()> {
         let product_id = self.insert_product(item)?;
         self.insert_price(product_id, store_id, item.price)?;
         Ok(())
     }
 
+    /// Insert all items for a store within a single transaction.
+    ///
+    /// This is much faster than inserting items one by one because:
+    /// - SQLite only commits once at the end instead of after each insert
+    /// - Reduces disk I/O significantly (from ~63,000 ops to ~1 op per store)
+    pub fn insert_items_for_store(
+        &self,
+        store: &Store,
+        supermarket: Supermarket,
+        items: &[SuperMarketItem],
+    ) -> rusqlite::Result<()> {
+        // Start transaction
+        self.db.conn.execute("BEGIN TRANSACTION", [])?;
+
+        // Insert store
+        if let Err(e) = self.insert_store(store, supermarket) {
+            self.db.conn.execute("ROLLBACK", [])?;
+            return Err(e);
+        }
+
+        // Insert all items
+        for item in items {
+            if let Err(e) = self.insert_item_with_price(item, &store.id) {
+                self.db.conn.execute("ROLLBACK", [])?;
+                return Err(e);
+            }
+        }
+
+        // Commit transaction
+        self.db.conn.execute("COMMIT", [])?;
+        Ok(())
+    }
 }

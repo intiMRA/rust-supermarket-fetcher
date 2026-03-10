@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
     if args.len() > 1 {
         match args[1].as_str() {
             "fetch" => {
-                let mut controller = FetchController::new();
+                let controller = FetchController::new();
                 controller.run().await;
                 Ok(())
             }
