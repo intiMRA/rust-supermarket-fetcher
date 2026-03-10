@@ -1,4 +1,31 @@
+# Build artifacts
 /target
+
+# IDE
 .idea/
+*.iml
+.vscode/
+
+# Database and data
 data/
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Model cache (fastembed downloads ~90MB model)
+.fastembed_cache/
+
+# Claude Code session data
+.claude/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

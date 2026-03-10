@@ -1,8 +1,8 @@
 mod connection;
 mod queries;
-mod repository;
+pub mod repository;
 mod schema;
 
 pub use connection::Database;
-pub use queries::{Queries, run_sample_queries, ProductWithPriceAndStore, StoreInfo};
-pub use repository::Repository;
+pub use queries::{Queries, run_sample_queries, ProductWithPriceAndStore, StoreInfo, ProductPriceInfo};
+pub use repository::{Repository, DeduplicationStats, ItemWithStore};

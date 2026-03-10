@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::database::{Database, Queries};
-use crate::matching::fuzzy_matcher::Product;
-use crate::matching::semantic_matcher::find_matching_products_semantic;
+use crate::matching::semantic_matcher::{find_matching_products_semantic, Product};
 use crate::utils::geo::haversine_distance_km;
 
 /// Maximum distance in km for NewWorld and PakNSave stores.

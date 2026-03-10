@@ -1,7 +1,6 @@
 use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 use std::sync::{Mutex, OnceLock};
-
-use super::fuzzy_matcher::Product;
+use serde::Serialize;
 
 /// Global embedding model - initialized once, reused across calls.
 /// Using OnceLock for lazy initialization and Mutex for mutable access.
@@ -21,7 +20,41 @@ fn get_model() -> &'static Mutex<TextEmbedding> {
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct Product {
+    pub product_name: String,
+    pub brand: String,
+    pub price: f64,
+    pub supermarket: String,
+    pub store_name: String,
+    pub store_id: String,
+    pub store_latitude: f64,
+    pub store_longitude: f64,
+    pub similarity_score: f64,
+}
+
 /// Calculate cosine similarity between two vectors.
+///
+/// Cosine similarity measures the cosine of the angle between two vectors,
+/// indicating how similar their directions are regardless of magnitude.
+///
+/// # Formula
+///
+/// ```text
+///                    A · B           Σ(Aᵢ × Bᵢ)
+/// cos(θ) = ─────────────────── = ─────────────────────
+///           ||A|| × ||B||       √Σ(Aᵢ²) × √Σ(Bᵢ²)
+/// ```
+///
+/// # Returns
+///
+/// A value between -1.0 and 1.0:
+/// - `1.0` = vectors point in the same direction (identical)
+/// - `0.0` = vectors are orthogonal (unrelated)
+/// - `-1.0` = vectors point in opposite directions
+///
+/// For normalized embeddings (like those from sentence transformers),
+/// values typically range from 0.0 to 1.0.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
     let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();

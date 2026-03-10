@@ -3,6 +3,14 @@ use rusqlite::Connection;
 /// SQL statements to create all tables.
 ///
 /// Using `IF NOT EXISTS` makes this idempotent - safe to run multiple times.
+///
+/// Schema Design (Deduplication):
+/// - `products`: One row per unique product (e.g., "Anchor Butter 500g")
+///   - Deduplicated across supermarkets using semantic matching
+///   - `embedding` stores 384-dim float32 vector for matching
+/// - `product_variants`: One row per supermarket source
+///   - Links to canonical product, stores original name
+/// - `prices`: One row per variant/store/day
 const CREATE_TABLES: &str = r#"
     -- Supermarkets table (NewWorld, PakNSave, Woolworth)
     CREATE TABLE IF NOT EXISTS supermarkets (
@@ -25,13 +33,8 @@ const CREATE_TABLES: &str = r#"
         longitude REAL
     );
 
-    -- Brands table (normalized to avoid duplicate strings)
-    CREATE TABLE IF NOT EXISTS brands (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE
-    );
-
     -- Categories table (e.g., "Pantry > Chocolate > Bags")
+    -- Categories are supermarket-specific
     CREATE TABLE IF NOT EXISTS categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         display_name TEXT NOT NULL,                             -- Full path: "Pantry > Chocolate"
@@ -40,39 +43,49 @@ const CREATE_TABLES: &str = r#"
         UNIQUE(display_name, supermarket_id)                    -- Same category can exist per supermarket
     );
 
-    -- Products table (the actual items)
+    -- Products table (deduplicated across supermarkets)
+    -- One row per unique product (e.g., "Anchor Butter 500g")
+    -- Size is part of identity: "Butter 1kg" != "Butter 500g"
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        external_id TEXT NOT NULL,                              -- ID from the API (e.g., "5329009-EA-000")
         name TEXT NOT NULL,
-        brand_id INTEGER REFERENCES brands(id),
-        image_url TEXT,
-        size_value REAL,                                        -- e.g., 500.0
-        size_unit TEXT,                                         -- e.g., "Gram", "Milliliter"
-        category_id INTEGER REFERENCES categories(id),
-        supermarket_id INTEGER NOT NULL REFERENCES supermarkets(id),
-        UNIQUE(external_id, supermarket_id)                     -- Same product ID unique per supermarket
+        brand TEXT,                                             -- TEXT, no brands table needed
+        size_value REAL,                                        -- Part of product identity (normalized)
+        size_unit TEXT,                                         -- Part of product identity (normalized)
+        embedding BLOB NOT NULL                                 -- 384-dim float32 (1536 bytes)
     );
 
-    -- Prices table (tracks price per store, enables history)
-    -- Note: We use DATE() for daily price tracking. For more granular tracking,
-    -- you could use DATETIME() or a custom timestamp column.
-    CREATE TABLE IF NOT EXISTS prices (
+    -- Product variants (original product info from each supermarket)
+    -- One row per supermarket source (tracks original names)
+    CREATE TABLE IF NOT EXISTS product_variants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL REFERENCES products(id),
+        external_id TEXT NOT NULL,                              -- ID from the API
+        original_name TEXT NOT NULL,                            -- As supermarket calls it
+        image_url TEXT,
+        category_id INTEGER REFERENCES categories(id),          -- Supermarket-specific
+        supermarket TEXT NOT NULL,                              -- "NewWorld", "PakNSave", "Woolworth"
+        UNIQUE(external_id, supermarket)
+    );
+
+    -- Prices per store
+    CREATE TABLE IF NOT EXISTS prices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        variant_id INTEGER NOT NULL REFERENCES product_variants(id),
         store_id TEXT NOT NULL REFERENCES stores(id),
         price REAL NOT NULL,
-        fetched_at TEXT DEFAULT (DATE('now')),                  -- Date we fetched this price
-        UNIQUE(product_id, store_id, fetched_at)                -- One price per product/store/day
+        fetched_at TEXT DEFAULT (DATE('now')),
+        UNIQUE(variant_id, store_id, fetched_at)
     );
 
     -- Indexes for fast queries
-    CREATE INDEX IF NOT EXISTS idx_prices_product ON prices(product_id);
+    CREATE INDEX IF NOT EXISTS idx_products_exact ON products(name, brand, size_value, size_unit);
+    CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
+    CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id);
+    CREATE INDEX IF NOT EXISTS idx_variants_external ON product_variants(external_id, supermarket);
+    CREATE INDEX IF NOT EXISTS idx_prices_variant ON prices(variant_id);
     CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store_id);
     CREATE INDEX IF NOT EXISTS idx_prices_fetched ON prices(fetched_at);
-    CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
-    CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
-    CREATE INDEX IF NOT EXISTS idx_products_external ON products(external_id);
 
     -- Metadata table for tracking various timestamps and settings
     CREATE TABLE IF NOT EXISTS metadata (
