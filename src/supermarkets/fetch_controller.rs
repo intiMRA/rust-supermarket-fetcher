@@ -9,6 +9,7 @@ use crate::supermarkets::woolworth_fetcher::WoolworthFetcher;
 use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
 use crate::loggers::logger::Logger;
 use crate::loggers::parse_logger::clear_parse_log;
+use crate::loggers::empty_brand_logger::clear_empty_brand_log;
 use crate::supermarkets::models::super_market_item::SuperMarketItem;
 use crate::supermarkets::models::store::Store;
 
@@ -30,8 +31,9 @@ impl FetchController {
         // Create data directory if it doesn't exist
         tokio::fs::create_dir_all("data").await.unwrap();
 
-        // Clear parse warnings log for this run
+        // Clear logs for this run
         clear_parse_log();
+        clear_empty_brand_log();
 
         // Open database
         let db = Database::open("data/supermarket.db").expect("Failed to open database");
@@ -39,6 +41,7 @@ impl FetchController {
 
         println!("Database opened: data/supermarket.db");
         println!("Parse warnings will be logged to: data/parse_warnings.log");
+        println!("Empty brand items will be logged to: data/empty_brand.log");
 
         // PHASE 1: Fetch all supermarkets in parallel (network I/O)
         println!("\n=== PHASE 1: Fetching from APIs ===");

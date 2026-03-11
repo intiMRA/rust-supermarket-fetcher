@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde_json::Value;
 
+use crate::loggers::empty_brand_logger::log_empty_brand;
 use crate::supermarkets::size_unit_types::SizeUnit;
 use crate::supermarkets::supermarket_types::Supermarket;
 use crate::supermarkets::models::category::Category;
@@ -140,6 +141,13 @@ impl FoodStuffCommonsTrait for FoodStuff {
                     && let Some(price_cents) = product["singlePrice"]["price"].as_i64()
                 {
                     let brand_name = product["brand"].as_str().unwrap_or("").to_string();
+
+                    // Log original server JSON when brand is empty
+                    if brand_name.is_empty() {
+                        let original_json = serde_json::to_string_pretty(product)
+                            .unwrap_or_else(|_| product.to_string());
+                        log_empty_brand(&original_json, id, self.supermarket.name());
+                    }
                     let size = SizeUnit::parse(product["displayName"].as_str().unwrap_or("Unknown"));
                     let image_id = id.split('-').next().unwrap_or(id);
                     let image_url = format!(

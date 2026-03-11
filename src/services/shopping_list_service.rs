@@ -1,21 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::database::{Database, Queries};
 use crate::matching::semantic_matcher::{find_matching_products_semantic, Product};
+use crate::supermarkets::supermarket_types::Supermarket;
 use crate::utils::geo::haversine_distance_km;
 
 /// Maximum distance in km for NewWorld and PakNSave stores.
 const MAX_DISTANCE_KM: f64 = 20.0;
 
 /// Number of top matches to return per item.
-const TOP_N_MATCHES: usize = 3;
+const TOP_N_MATCHES: usize = 5;
 
 /// Number of candidates to fetch from BM25 search.
 const BM25_CANDIDATE_LIMIT: usize = 100;
-
-/// Supermarket IDs from the database.
-const SUPERMARKET_ID_WOOLWORTH: i32 = 3;
 
 /// Weight for BM25 score in hybrid ranking (0.0 to 1.0).
 const BM25_WEIGHT: f64 = 0.4;
@@ -34,16 +32,24 @@ pub struct ShoppingListRequest {
     pub longitude: f64,
 }
 
-/// A matched product in the response.
+/// Price info from a specific supermarket/store.
+#[derive(Debug, Serialize, Clone)]
+pub struct SupermarketInfo {
+    pub supermarket: String,
+    pub store_name: String,
+    pub distance_km: f64,
+    pub price: f64,
+}
+
+/// A matched product in the response with prices from multiple stores.
 #[derive(Debug, Serialize)]
 pub struct MatchedProduct {
     pub product_name: String,
     pub brand: String,
-    pub price: f64,
-    pub supermarket: String,
-    pub store_name: String,
-    pub distance_km: f64,
+    pub size_value: f64,
+    pub size_unit: String,
     pub similarity_score: f64,
+    pub supermarket_info: Vec<SupermarketInfo>,
 }
 
 /// A single item from the shopping list with its matches.
@@ -73,6 +79,7 @@ struct NearbyStore {
 /// 1. BM25 (keyword search): Fast, handles exact matches well ("milk" → "Fresh Milk")
 /// 2. Semantic (embeddings): Understands meaning ("butter" → "Anchor Butter")
 /// 3. Combined scoring: BM25 (40%) + Semantic (20%) + Price (40%)
+/// 4. Group by product: Return deduplicated products with prices from all stores
 pub fn process_shopping_list(
     request: &ShoppingListRequest,
     db: &Database,
@@ -96,13 +103,9 @@ pub fn process_shopping_list(
     }
 
     let store_ids: Vec<String> = nearby_stores.iter().map(|s| s.id.clone()).collect();
-    let store_distance_map: HashMap<String, f64> = nearby_stores
+    let store_map: HashMap<String, &NearbyStore> = nearby_stores
         .iter()
-        .map(|s| (s.id.clone(), s.distance_km))
-        .collect();
-    let store_name_map: HashMap<String, String> = nearby_stores
-        .iter()
-        .map(|s| (s.id.clone(), s.name.clone()))
+        .map(|s| (s.id.clone(), s))
         .collect();
 
     // Step 2: Process each item using hybrid search
@@ -114,8 +117,7 @@ pub fn process_shopping_list(
                 search_term,
                 &queries,
                 &store_ids,
-                &store_distance_map,
-                &store_name_map,
+                &store_map,
             )
         })
         .collect();
@@ -123,51 +125,53 @@ pub fn process_shopping_list(
     ShoppingListResponse { items }
 }
 
-/// Process a single shopping list item using category-first, then BM25.
+/// Process a single shopping list item.
 fn process_single_item(
     search_term: &str,
     queries: &Queries<'_>,
     store_ids: &[String],
-    store_distance_map: &HashMap<String, f64>,
-    store_name_map: &HashMap<String, String>,
+    store_map: &HashMap<String, &NearbyStore>,
 ) -> ShoppingListItem {
-    // Strategy: Category-first for generic terms, BM25 for specific products
-    // "milk" → Fresh Milk category (not "chocolate milk bars")
-    // "anchor milk 2l" → BM25 search (specific product)
+    // Get candidates from both category search and BM25, then combine
+    let mut candidates: Vec<Product> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // First, try category-based search
     let category_ids = queries.find_matching_category_ids(search_term);
-
-    let candidates = if !category_ids.is_empty() {
-        // Found matching category - search within it
+    if !category_ids.is_empty() {
         let category_products = queries.search_products_in_categories_and_stores(
             &category_ids,
             store_ids,
         );
 
-        if !category_products.is_empty() {
-            // Convert to Product format with default BM25 score
-            category_products
-                .into_iter()
-                .map(|p| Product {
+        for p in category_products {
+            let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
+            if seen_keys.insert(key) {
+                candidates.push(Product {
                     product_name: p.product_name,
                     brand: p.brand,
+                    size_value: p.size_value,
+                    size_unit: p.size_unit,
                     price: p.price,
                     supermarket: p.supermarket,
                     store_name: p.store_name,
                     store_id: p.store_id,
                     store_latitude: p.store_latitude,
                     store_longitude: p.store_longitude,
-                    similarity_score: 0.7, // Good base score for category match
-                })
-                .collect::<Vec<_>>()
-        } else {
-            // Category exists but no products in nearby stores, try BM25
-            get_bm25_candidates(search_term, queries, store_ids)
+                    similarity_score: 0.7,
+                });
+            }
         }
-    } else {
-        // No category match - use BM25 for specific product search
-        get_bm25_candidates(search_term, queries, store_ids)
-    };
+    }
+
+    // Always also get BM25 candidates to ensure we have enough results
+    let bm25_candidates = get_bm25_candidates(search_term, queries, store_ids);
+    for p in bm25_candidates {
+        let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
+        if seen_keys.insert(key) {
+            candidates.push(p);
+        }
+    }
 
     if candidates.is_empty() {
         return ShoppingListItem {
@@ -176,10 +180,8 @@ fn process_single_item(
         };
     }
 
-    // Step 2: Apply semantic matching to get semantic scores
+    // Apply semantic matching
     let semantic_matches = find_matching_products_semantic(search_term, &candidates, 0.0);
-
-    // Create lookup map for semantic scores
     let semantic_scores: HashMap<String, f64> = semantic_matches
         .into_iter()
         .map(|p| {
@@ -188,142 +190,104 @@ fn process_single_item(
         })
         .collect();
 
-    // Step 3: Calculate hybrid scores and sort
+    // Calculate hybrid scores and store in similarity_score field
     let max_price = candidates
         .iter()
         .map(|p| p.price)
         .fold(0.0_f64, f64::max)
         .max(1.0);
 
-    let mut scored_products: Vec<(Product, f64)> = candidates
+    let scored_products: Vec<Product> = candidates
         .into_iter()
-        .map(|p| {
-            let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
-            let semantic_score = semantic_scores.get(&key).copied().unwrap_or(0.0);
-            let bm25_score = p.similarity_score; // We stored BM25 here earlier
-            let price_score = 1.0 - (p.price / max_price);
-
-            let hybrid_score = (bm25_score * BM25_WEIGHT)
-                + (semantic_score * SEMANTIC_WEIGHT)
-                + (price_score * PRICE_WEIGHT);
-
-            (p, hybrid_score)
-        })
-        .collect();
-
-    // Sort by hybrid score descending
-    scored_products.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-    // Step 4: Convert to response format
-    let mut seen_products: HashSet<String> = HashSet::new();
-    let top_matches: Vec<MatchedProduct> = scored_products
-        .into_iter()
-        .filter_map(|(p, score)| {
-            let key = p.product_name.to_lowercase();
-            if seen_products.contains(&key) {
-                return None;
-            }
-            seen_products.insert(key);
-
-            let distance = store_distance_map.get(&p.store_id).copied().unwrap_or(0.0);
-            let store_name = store_name_map.get(&p.store_id).cloned().unwrap_or(p.store_name);
-
-            Some(MatchedProduct {
-                product_name: p.product_name,
-                brand: p.brand,
-                price: p.price,
-                supermarket: p.supermarket,
-                store_name,
-                distance_km: (distance * 10.0).round() / 10.0,
-                similarity_score: (score * 100.0).round() / 100.0,
-            })
-        })
-        .take(TOP_N_MATCHES)
-        .collect();
-
-    // Final fallback: if no results after category search, try BM25 without category
-    if top_matches.is_empty() {
-        let bm25_candidates = get_bm25_candidates(search_term, queries, store_ids);
-        if !bm25_candidates.is_empty() {
-            return process_candidates_to_matches(
-                search_term,
-                bm25_candidates,
-                store_distance_map,
-                store_name_map,
-            );
-        }
-    }
-
-    ShoppingListItem {
-        search_term: search_term.to_string(),
-        top_matches,
-    }
-}
-
-/// Convert candidates to final matches with scoring.
-fn process_candidates_to_matches(
-    search_term: &str,
-    candidates: Vec<Product>,
-    store_distance_map: &HashMap<String, f64>,
-    store_name_map: &HashMap<String, String>,
-) -> ShoppingListItem {
-    if candidates.is_empty() {
-        return ShoppingListItem {
-            search_term: search_term.to_string(),
-            top_matches: Vec::new(),
-        };
-    }
-
-    let semantic_matches = find_matching_products_semantic(search_term, &candidates, 0.0);
-    let semantic_scores: HashMap<String, f64> = semantic_matches
-        .iter()
-        .map(|p| {
-            let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
-            (key, p.similarity_score)
-        })
-        .collect();
-
-    let max_price = candidates.iter().map(|p| p.price).fold(0.0_f64, f64::max).max(1.0);
-
-    let mut scored_products: Vec<(Product, f64)> = candidates
-        .into_iter()
-        .map(|p| {
+        .map(|mut p| {
             let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
             let semantic_score = semantic_scores.get(&key).copied().unwrap_or(0.0);
             let bm25_score = p.similarity_score;
             let price_score = 1.0 - (p.price / max_price);
+
             let hybrid_score = (bm25_score * BM25_WEIGHT)
                 + (semantic_score * SEMANTIC_WEIGHT)
                 + (price_score * PRICE_WEIGHT);
-            (p, hybrid_score)
+
+            // Update store_name from store_map if available
+            if let Some(store_info) = store_map.get(&p.store_id) {
+                p.store_name = store_info.name.clone();
+            }
+
+            p.similarity_score = hybrid_score;
+            p
         })
         .collect();
 
-    scored_products.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    // Group by product name + size (lowercased for deduplication)
+    // This ensures "Chocolate Milk 300ml" and "Chocolate Milk 750ml" are separate products
+    let mut product_groups: HashMap<String, Vec<Product>> = HashMap::new();
+    for p in scored_products {
+        let key = format!("{}|{}|{}", p.product_name.to_lowercase(), p.size_value, p.size_unit.to_lowercase());
+        product_groups.entry(key).or_default().push(p);
+    }
 
-    let mut seen_products: HashSet<String> = HashSet::new();
-    let top_matches: Vec<MatchedProduct> = scored_products
+    // Convert groups to MatchedProduct with supermarket_info array
+    let mut grouped_products: Vec<MatchedProduct> = product_groups
         .into_iter()
-        .filter_map(|(p, score)| {
-            let key = p.product_name.to_lowercase();
-            if seen_products.contains(&key) {
-                return None;
+        .map(|(_, mut group)| {
+            // Sort stores by price within each product
+            group.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
+
+            // Take the best score from the group
+            let best_score = group.iter().map(|p| p.similarity_score).fold(0.0_f64, f64::max);
+            let product_name = group[0].product_name.clone();
+            let brand = group[0].brand.clone();
+            let size_value = group[0].size_value;
+            let size_unit = group[0].size_unit.clone();
+
+            // Collect store prices, deduplicated by store_id (keep cheapest per store)
+            let mut store_prices: HashMap<String, SupermarketInfo> = HashMap::new();
+            for p in group {
+                let distance_km = store_map
+                    .get(&p.store_id)
+                    .map(|s| s.distance_km)
+                    .unwrap_or(0.0);
+
+                let info = SupermarketInfo {
+                    supermarket: p.supermarket,
+                    store_name: p.store_name,
+                    distance_km: (distance_km * 10.0).round() / 10.0,
+                    price: p.price,
+                };
+
+                // Only insert if this store hasn't been seen or has a lower price
+                store_prices
+                    .entry(p.store_id)
+                    .and_modify(|existing| {
+                        if info.price < existing.price {
+                            *existing = info.clone();
+                        }
+                    })
+                    .or_insert(info);
             }
-            seen_products.insert(key);
 
-            let distance = store_distance_map.get(&p.store_id).copied().unwrap_or(0.0);
-            let store_name = store_name_map.get(&p.store_id).cloned().unwrap_or(p.store_name);
+            // Sort by price
+            let mut supermarket_info: Vec<SupermarketInfo> = store_prices.into_values().collect();
+            supermarket_info.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
 
-            Some(MatchedProduct {
-                product_name: p.product_name,
-                brand: p.brand,
-                price: p.price,
-                supermarket: p.supermarket,
-                store_name,
-                distance_km: (distance * 10.0).round() / 10.0,
-                similarity_score: (score * 100.0).round() / 100.0,
-            })
+            MatchedProduct {
+                product_name,
+                brand,
+                size_value,
+                size_unit,
+                similarity_score: (best_score * 100.0).round() / 100.0,
+                supermarket_info,
+            }
         })
+        .collect();
+
+    // Sort by best score descending
+    grouped_products.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
+
+    // Take top N
+    let top_matches: Vec<MatchedProduct> = grouped_products
+        .into_iter()
         .take(TOP_N_MATCHES)
         .collect();
 
@@ -342,13 +306,14 @@ fn get_bm25_candidates(
     let bm25_results = queries.search_products_bm25(search_term, store_ids, BM25_CANDIDATE_LIMIT);
 
     if bm25_results.is_empty() {
-        // BM25 returned nothing, try LIKE-based text search
         let db_products = queries.search_products_in_stores(search_term, store_ids);
         return db_products
             .into_iter()
             .map(|p| Product {
                 product_name: p.product_name,
                 brand: p.brand,
+                size_value: p.size_value,
+                size_unit: p.size_unit,
                 price: p.price,
                 supermarket: p.supermarket,
                 store_name: p.store_name,
@@ -372,6 +337,8 @@ fn get_bm25_candidates(
             Product {
                 product_name: r.product_name,
                 brand: r.brand,
+                size_value: r.size_value,
+                size_unit: r.size_unit,
                 price: r.price,
                 supermarket: r.supermarket,
                 store_name: r.store_name,
@@ -394,13 +361,18 @@ fn find_stores_to_query(
     let db_stores = queries.get_all_stores();
 
     for store in db_stores {
-        if store.supermarket_id == SUPERMARKET_ID_WOOLWORTH {
+        let supermarket = Supermarket::from_id(store.supermarket_id);
+        let has_single_store = supermarket.map(|s| s.has_single_store()).unwrap_or(false);
+
+        if has_single_store {
+            // Supermarkets with a single virtual store (e.g., Woolworths) - no distance filtering
             stores_to_query.push(NearbyStore {
                 id: store.id,
                 name: store.name,
                 distance_km: 0.0,
             });
         } else {
+            // Supermarkets with physical stores - filter by distance
             let distance = haversine_distance_km(
                 user_lat,
                 user_lon,
@@ -437,5 +409,49 @@ mod tests {
         assert_eq!(request.items.len(), 2);
         assert_eq!(request.items[0], "milk");
         assert!(request.latitude < 0.0);
+    }
+
+    #[test]
+    fn test_supermarket_info_serialization() {
+        let info = SupermarketInfo {
+            supermarket: "PakNSave".to_string(),
+            store_name: "Pak'n Save Albany".to_string(),
+            distance_km: 2.5,
+            price: 5.99,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("PakNSave"));
+        assert!(json.contains("5.99"));
+    }
+
+    #[test]
+    fn test_matched_product_serialization() {
+        let product = MatchedProduct {
+            product_name: "Anchor Milk 2L".to_string(),
+            brand: "Anchor".to_string(),
+            size_value: 0.0,
+            size_unit: "Liter".to_string(),
+            similarity_score: 0.95,
+            supermarket_info: vec![
+                SupermarketInfo {
+                    supermarket: "PakNSave".to_string(),
+                    store_name: "Pak'n Save Albany".to_string(),
+                    distance_km: 2.5,
+                    price: 5.99,
+                },
+                SupermarketInfo {
+                    supermarket: "NewWorld".to_string(),
+                    store_name: "New World Mt Eden".to_string(),
+                    distance_km: 3.1,
+                    price: 6.29,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&product).unwrap();
+        assert!(json.contains("supermarket_info"));
+        assert!(json.contains("PakNSave"));
+        assert!(json.contains("NewWorld"));
     }
 }

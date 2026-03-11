@@ -7,6 +7,8 @@ use super::Database;
 pub struct ProductWithPriceAndStore {
     pub product_name: String,
     pub brand: String,
+    pub size_value: f64,
+    pub size_unit: String,
     pub price: f64,
     pub supermarket: String,
     pub supermarket_id: i32,
@@ -336,7 +338,8 @@ impl<'a> Queries<'a> {
         let store_in_clause = store_placeholders.join(", ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), pr.price, v.supermarket, st.id, s.id,
+            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
@@ -362,13 +365,15 @@ impl<'a> Queries<'a> {
                 Ok(ProductWithPriceAndStore {
                     product_name: row.get(0)?,
                     brand: row.get(1)?,
-                    price: row.get(2)?,
-                    supermarket: row.get(3)?,
-                    store_id: row.get(4)?,
-                    supermarket_id: row.get(5)?,
-                    store_name: row.get(6)?,
-                    store_latitude: row.get(7)?,
-                    store_longitude: row.get(8)?,
+                    size_value: row.get(2)?,
+                    size_unit: row.get(3)?,
+                    price: row.get(4)?,
+                    supermarket: row.get(5)?,
+                    store_id: row.get(6)?,
+                    supermarket_id: row.get(7)?,
+                    store_name: row.get(8)?,
+                    store_latitude: row.get(9)?,
+                    store_longitude: row.get(10)?,
                 })
             })
             .unwrap();
@@ -545,7 +550,8 @@ impl<'a> Queries<'a> {
         let store_in_clause = store_placeholders.join(", ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), pr.price, v.supermarket, st.id, s.id,
+            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
@@ -571,13 +577,15 @@ impl<'a> Queries<'a> {
                 Ok(ProductWithPriceAndStore {
                     product_name: row.get(0)?,
                     brand: row.get(1)?,
-                    price: row.get(2)?,
-                    supermarket: row.get(3)?,
-                    store_id: row.get(4)?,
-                    supermarket_id: row.get(5)?,
-                    store_name: row.get(6)?,
-                    store_latitude: row.get(7)?,
-                    store_longitude: row.get(8)?,
+                    size_value: row.get(2)?,
+                    size_unit: row.get(3)?,
+                    price: row.get(4)?,
+                    supermarket: row.get(5)?,
+                    store_id: row.get(6)?,
+                    supermarket_id: row.get(7)?,
+                    store_name: row.get(8)?,
+                    store_latitude: row.get(9)?,
+                    store_longitude: row.get(10)?,
                 })
             })
             .unwrap();
@@ -605,7 +613,8 @@ impl<'a> Queries<'a> {
         let where_clause = word_conditions.join(" AND ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), pr.price, v.supermarket, st.id, s.id,
+            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
@@ -630,13 +639,15 @@ impl<'a> Queries<'a> {
                 Ok(ProductWithPriceAndStore {
                     product_name: row.get(0)?,
                     brand: row.get(1)?,
-                    price: row.get(2)?,
-                    supermarket: row.get(3)?,
-                    store_id: row.get(4)?,
-                    supermarket_id: row.get(5)?,
-                    store_name: row.get(6)?,
-                    store_latitude: row.get(7)?,
-                    store_longitude: row.get(8)?,
+                    size_value: row.get(2)?,
+                    size_unit: row.get(3)?,
+                    price: row.get(4)?,
+                    supermarket: row.get(5)?,
+                    store_id: row.get(6)?,
+                    supermarket_id: row.get(7)?,
+                    store_name: row.get(8)?,
+                    store_latitude: row.get(9)?,
+                    store_longitude: row.get(10)?,
                 })
             })
             .unwrap();
@@ -677,7 +688,8 @@ impl<'a> Queries<'a> {
         let fts_query = search_term.split_whitespace().collect::<Vec<_>>().join(" ");
 
         let query = format!(
-            "SELECT p.id, p.name, COALESCE(p.brand, ''), pr.price, v.supermarket, st.id,
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0),
                     bm25(products_fts) as bm25_score
              FROM products_fts fts
@@ -707,13 +719,15 @@ impl<'a> Queries<'a> {
                 product_id: row.get(0)?,
                 product_name: row.get(1)?,
                 brand: row.get(2)?,
-                price: row.get(3)?,
-                supermarket: row.get(4)?,
-                store_id: row.get(5)?,
-                store_name: row.get(6)?,
-                store_latitude: row.get(7)?,
-                store_longitude: row.get(8)?,
-                bm25_score: row.get(9)?,
+                size_value: row.get(3)?,
+                size_unit: row.get(4)?,
+                price: row.get(5)?,
+                supermarket: row.get(6)?,
+                store_id: row.get(7)?,
+                store_name: row.get(8)?,
+                store_latitude: row.get(9)?,
+                store_longitude: row.get(10)?,
+                bm25_score: row.get(11)?,
             })
         });
 
@@ -792,6 +806,8 @@ pub struct ProductWithBm25Score {
     pub product_id: i64,
     pub product_name: String,
     pub brand: String,
+    pub size_value: f64,
+    pub size_unit: String,
     pub price: f64,
     pub supermarket: String,
     pub store_id: String,

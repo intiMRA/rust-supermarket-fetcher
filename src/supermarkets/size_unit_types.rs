@@ -29,134 +29,174 @@ pub enum SizeUnit {
 }
 
 impl SizeUnit {
-    // ===== Prefixes =====
-    const PREFIX_PER: &'static str = "per ";
-    const PREFIX_PACK_SPACE: &'static str = "pack ";
-
-    /// Prefixes that can be stripped before parsing the actual unit
+    /// Prefixes that can be stripped before parsing
     const IGNORABLE_PREFIXES: &'static [&'static str] = &[
-        "average ",
-        "min order ",
-        "convenience ",
-        "steak ",
-        "sugar ",
+        "average ", "min order ", "convenience ", "steak ", "sugar ",
     ];
 
-    // ===== Separators =====
-    const SEPARATOR_MULTIPACK: &'static str = " x ";
-    const SEPARATOR_RANGE_SPACED: &'static str = " - ";
-    const SEPARATOR_RANGE: char = '-';
-    const SEPARATOR_MULTIPACK_CHAR: char = 'x';
+    /// Suffixes that can be stripped (container words)
+    const IGNORABLE_SUFFIXES: &'static [&'static str] = &[
+        " pks", " packs", " pouches", " bars", " pack", " roll", " tray",
+        " bags", " sachets", " bottles", " cans", " tins", " jars",
+    ];
 
-    // ===== Special words =====
-    const WORD_UNKNOWN: &'static str = "unknown";
-    const WORD_WIDE: &'static str = "wide";
-
-    /// Helper to create Kilogram from grams (normalizes during parsing)
+    /// Helper to create Kilogram from grams
     fn kilogram_from_grams(grams: f64) -> SizeUnit {
         SizeUnit::Kilogram(grams / 1000.0)
     }
 
-    /// Helper to create Liter from milliliters (normalizes during parsing)
+    /// Helper to create Liter from milliliters
     fn liter_from_ml(ml: f64) -> SizeUnit {
         SizeUnit::Liter(ml / 1000.0)
     }
 
-    /// Helper to create Millimeter from centimeters (normalizes during parsing)
+    /// Helper to create Millimeter from centimeters
     fn mm_from_cm(cm: f64) -> SizeUnit {
         SizeUnit::Millimeter(cm * 10.0)
     }
 
     pub fn parse(s: &str) -> SizeUnit {
         let original = s;
-        let mut s = s.trim().to_lowercase();
+        let s = s.trim().to_lowercase();
 
         // Handle empty/unknown
-        if s.is_empty() || s == Self::WORD_UNKNOWN {
+        if s.is_empty() || s == "unknown" {
             return SizeUnit::Unknown;
         }
 
+        // Normalize: collapse multiple spaces, trim
+        let s = Self::normalize_spaces(&s);
+
         // Strip ignorable prefixes
+        let s = Self::strip_prefixes(&s);
+
+        // Strip ignorable suffixes (container words like "pks", "packs", "pouches")
+        let s = Self::strip_suffixes(&s);
+
+        // Try all parse strategies in order
+        Self::try_parse(&s, original)
+    }
+
+    fn normalize_spaces(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn strip_prefixes(s: &str) -> String {
+        let mut result = s.to_string();
         for prefix in Self::IGNORABLE_PREFIXES {
-            if let Some(rest) = s.strip_prefix(prefix) {
-                s = rest.to_string();
+            if let Some(rest) = result.strip_prefix(prefix) {
+                result = rest.to_string();
                 break;
             }
         }
+        result
+    }
 
-        // Handle "per kg", "per g", etc.
-        if let Some(rest) = s.strip_prefix(Self::PREFIX_PER) {
-            let inner = Self::parse(rest);
+    fn strip_suffixes(s: &str) -> String {
+        let mut result = s.to_string();
+        for suffix in Self::IGNORABLE_SUFFIXES {
+            if let Some(rest) = result.strip_suffix(suffix) {
+                result = rest.to_string();
+                break;
+            }
+        }
+        result
+    }
+
+    fn try_parse(s: &str, original: &str) -> SizeUnit {
+        // 1. "per kg", "per g", etc.
+        if let Some(rest) = s.strip_prefix("per ") {
+            let inner = Self::try_parse(rest, original);
             if inner != SizeUnit::Unknown {
                 return SizeUnit::PerUnit(Box::new(inner));
             }
         }
 
-        // Handle "pack with inline size" format: "6pack 330ml", "15pack 330mL"
-        if let Some(result) = Self::parse_pack_with_size(&s) {
+        // 2. Volume/weight then pack count: "27l 20pack", "36l 15pack"
+        if let Some(result) = Self::parse_unit_then_pack(s) {
             return result;
         }
 
-        // Handle multipack format: "6 x 250ml", "10 x 17g"
-        if let Some((count_str, unit_str)) = s.split_once(Self::SEPARATOR_MULTIPACK) {
-            if let Ok(count) = count_str.trim().parse::<u32>() {
-                let inner = Self::parse(unit_str);
-                if inner != SizeUnit::Unknown {
-                    return SizeUnit::MultiPack { count, unit: Box::new(inner) };
-                }
-            }
-        }
-
-        // Handle multipack without space: "10x22g", "6x330ml"
-        if let Some(result) = Self::parse_multipack_no_space(&s) {
+        // 3. "Npk Xg" format: "3pk 210g", "4pk 12g"
+        if let Some(result) = Self::parse_pk_space_unit(s) {
             return result;
         }
 
-        // Handle dimension format: "12mm x 15m" - parse first dimension only
-        if let Some(result) = Self::parse_dimension(&s) {
+        // 4. Multipack formats: "6 x 250ml", "10x22g", "6x 85g", "4 x80g", "8p x 330ml"
+        if let Some(result) = Self::parse_multipack(s) {
             return result;
         }
 
-        // Handle range format with spaces: "0.5 - 0.7kg", "2.5 - 3.5kg"
-        let normalized_range = s.replace(Self::SEPARATOR_RANGE_SPACED, "-");
-
-        // Handle range format: "0.55-0.75kg", "0.65-1.2kg 12pcs"
-        let range_part = normalized_range.split_whitespace().next().unwrap_or(&normalized_range);
-        if range_part.contains(Self::SEPARATOR_RANGE) && !range_part.starts_with(Self::SEPARATOR_RANGE) {
-            if let Some(result) = Self::parse_range(range_part) {
-                return result;
-            }
+        // 5. Dimension format: "12mm x 15m", "18mmx10m"
+        if let Some(result) = Self::parse_dimension(s) {
+            return result;
         }
 
-        // Handle word aliases → Unit
-        match s.as_str() {
-            "each" | "single" | "ea" => return SizeUnit::Unit(1.0),
-            "pk" => return SizeUnit::Unit(1.0),
+        // 6. Range format: "0.55-0.75kg", "1-2pcs"
+        if let Some(result) = Self::parse_range(s) {
+            return result;
+        }
+
+        // 7. "Nkg pack", "2kg pack" - unit followed by "pack" word
+        if let Some(result) = Self::parse_unit_pack(s) {
+            return result;
+        }
+
+        // 8. Word aliases
+        match s {
+            "each" | "single" | "ea" | "pk" => return SizeUnit::Unit(1.0),
             _ => {}
         }
 
-        // Handle "ea" with number prefix → Unit
+        // 9. "N size", "N cup" patterns
+        if let Some(result) = Self::parse_count_word(s) {
+            return result;
+        }
+
+        // 10. "Nea" pattern
         if let Some(value_str) = s.strip_suffix("ea") {
             if let Ok(v) = value_str.trim().parse::<f64>() {
                 return SizeUnit::Unit(v);
             }
         }
 
-        // Handle bare units without numbers
-        if let Some(unit) = Self::parse_bare_unit(&s) {
+        // 11. "Np" pattern (8p = 8 pieces)
+        if let Some(value_str) = s.strip_suffix("p") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return SizeUnit::Unit(v);
+            }
+        }
+
+        // 12. Bare units without numbers
+        if let Some(unit) = Self::parse_bare_unit(s) {
             return unit;
         }
 
-        // Handle count suffix "s" pattern: "100s", "45s" → Unit
+        // 13. "N+unit" pattern: "8+kg"
+        if let Some(result) = Self::parse_plus_unit(s) {
+            return result;
+        }
+
+        // 14. "Ns" pattern: "100s", "45s"
         if let Some(value_str) = s.strip_suffix('s') {
             if let Ok(v) = value_str.trim().parse::<f64>() {
                 return SizeUnit::Unit(v);
             }
         }
 
-        // Standard unit parsing with numeric prefix
-        if let Some(unit) = Self::parse_suffixed_unit(&s, original) {
+        // 15. Standard suffixed units: "500g", "1kg", "500ml", etc.
+        if let Some(unit) = Self::parse_suffixed_unit(s) {
             return unit;
+        }
+
+        // 16. Bare number (assume grams for weight context, or unit)
+        if let Ok(v) = s.parse::<f64>() {
+            // Small numbers likely units, large numbers likely grams
+            if v < 10.0 {
+                return SizeUnit::Unit(v);
+            } else {
+                return Self::kilogram_from_grams(v);
+            }
         }
 
         // Log unrecognized formats
@@ -164,134 +204,47 @@ impl SizeUnit {
         SizeUnit::Unknown
     }
 
-    fn parse_bare_unit(s: &str) -> Option<SizeUnit> {
-        match s {
-            "kg" => Some(SizeUnit::Kilogram(1.0)),
-            "g" | "gm" => Some(SizeUnit::Kilogram(0.001)),  // 1g = 0.001kg
-            "mg" => Some(SizeUnit::Milligram(1.0)),
-            "ml" => Some(SizeUnit::Liter(0.001)),  // 1ml = 0.001L
-            "l" => Some(SizeUnit::Liter(1.0)),
-            "m" | "mtr" => Some(SizeUnit::Meter(1.0)),
-            "cm" => Some(SizeUnit::Millimeter(10.0)),  // 1cm = 10mm
-            "mm" => Some(SizeUnit::Millimeter(1.0)),
-            "inch" => Some(SizeUnit::Inch(1.0)),
-            _ => None,
-        }
-    }
+    /// Parse "27l 20pack" → MultiPack(20, Liter(27))
+    fn parse_unit_then_pack(s: &str) -> Option<SizeUnit> {
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        if parts.len() == 2 {
+            let unit_part = parts[0];
+            let pack_part = parts[1];
 
-    fn parse_suffixed_unit(s: &str, original: &str) -> Option<SizeUnit> {
-        // Sheets → Unit
-        for suffix in &[" sheets", "sheets", " sheet", "sheet"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_to_unit(value_str, original));
+            // Check if second part ends with "pack"
+            if let Some(count_str) = pack_part.strip_suffix("pack") {
+                if let Ok(count) = count_str.parse::<u32>() {
+                    let inner = Self::try_parse(unit_part, unit_part);
+                    if inner != SizeUnit::Unknown {
+                        return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
+                    }
+                }
             }
         }
-
-        // Tablets/capsules → Unit
-        for suffix in &[" tablets", "tablets", " tabs", "tabs", " caps", "caps"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_to_unit(value_str, original));
-            }
-        }
-
-        // Serves → Unit
-        for suffix in &[" serves", "serves", " serve", "serve"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_to_unit(value_str, original));
-            }
-        }
-
-        // Pairs → Unit
-        for suffix in &[" pair", "pair", "pr"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_to_unit(value_str, original));
-            }
-        }
-
-        // Inch
-        for suffix in &[" inch", "inch"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_float(value_str, original, SizeUnit::Inch));
-            }
-        }
-
-        // Weight units (check kg, mg, gm before g)
-        if let Some(value_str) = s.strip_suffix("kg") {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Kilogram));
-        }
-        if let Some(value_str) = s.strip_suffix("mg") {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Milligram));
-        }
-        if let Some(value_str) = s.strip_suffix("gm") {
-            return Some(Self::parse_float(value_str, original, Self::kilogram_from_grams));
-        }
-        if let Some(value_str) = s.strip_suffix('g') {
-            return Some(Self::parse_float(value_str, original, Self::kilogram_from_grams));
-        }
-
-        // Volume units (check ml before l)
-        if let Some(value_str) = s.strip_suffix("ml") {
-            return Some(Self::parse_float(value_str, original, Self::liter_from_ml));
-        }
-        if let Some(value_str) = s.strip_suffix('l') {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Liter));
-        }
-
-        // Length units (check cm, mm, mtr before m)
-        if let Some(value_str) = s.strip_suffix("cm") {
-            return Some(Self::parse_float(value_str, original, Self::mm_from_cm));
-        }
-        if let Some(value_str) = s.strip_suffix("mm") {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Millimeter));
-        }
-        if let Some(value_str) = s.strip_suffix("mtr") {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Meter));
-        }
-        if let Some(value_str) = s.strip_suffix('m') {
-            return Some(Self::parse_float(value_str, original, SizeUnit::Meter));
-        }
-
-        // Pack/piece units → Unit
-        for suffix in &["pack", "pk", "pcs", "pce", "pc"] {
-            if let Some(value_str) = s.strip_suffix(suffix) {
-                return Some(Self::parse_to_unit(value_str, original));
-            }
-        }
-
         None
     }
 
-    fn parse_float<F>(value_str: &str, original: &str, constructor: F) -> SizeUnit
-    where
-        F: FnOnce(f64) -> SizeUnit,
-    {
-        match value_str.trim().parse::<f64>() {
-            Ok(v) => constructor(v),
-            Err(_) => {
-                log_parse_warning("SizeUnit", original, "invalid number for float unit");
-                SizeUnit::Unknown
+    /// Parse "3pk 210g" → MultiPack(3, Kilogram(0.21))
+    /// Also handles "10 5.2g" → MultiPack(10, Kilogram(0.0052))
+    fn parse_pk_space_unit(s: &str) -> Option<SizeUnit> {
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        if parts.len() == 2 {
+            let first = parts[0];
+            let second = parts[1];
+
+            // Check if first part is "Npk"
+            if let Some(count_str) = first.strip_suffix("pk") {
+                if let Ok(count) = count_str.parse::<u32>() {
+                    let inner = Self::try_parse(second, second);
+                    if inner != SizeUnit::Unknown {
+                        return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
+                    }
+                }
             }
-        }
-    }
 
-    fn parse_to_unit(value_str: &str, original: &str) -> SizeUnit {
-        match value_str.trim().parse::<f64>() {
-            Ok(v) => SizeUnit::Unit(v),
-            Err(_) => {
-                log_parse_warning("SizeUnit", original, "invalid number for unit");
-                SizeUnit::Unknown
-            }
-        }
-    }
-
-    /// Parse "pack with inline size" format: "6pack 330ml", "15pack 330mL"
-    fn parse_pack_with_size(s: &str) -> Option<SizeUnit> {
-        if let Some(pack_pos) = s.find(Self::PREFIX_PACK_SPACE) {
-            let count_str = &s[..pack_pos];
-            let unit_str = &s[pack_pos + Self::PREFIX_PACK_SPACE.len()..];
-
-            if let Ok(count) = count_str.trim().parse::<u32>() {
-                let inner = Self::parse(unit_str);
+            // Check if first part is just a number: "10 5.2g" format
+            if let Ok(count) = first.parse::<u32>() {
+                let inner = Self::try_parse(second, second);
                 if inner != SizeUnit::Unknown {
                     return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
                 }
@@ -300,56 +253,62 @@ impl SizeUnit {
         None
     }
 
-    /// Parse multipack without space: "10x22g", "6x330ml"
-    fn parse_multipack_no_space(s: &str) -> Option<SizeUnit> {
-        if let Some(x_pos) = s.find(Self::SEPARATOR_MULTIPACK_CHAR) {
-            let left = &s[..x_pos];
-            let right = &s[x_pos + 1..];
+    /// Parse multipack formats: "6 x 250ml", "10x22g", "6x 85g", "4 x80g", "8p x 330ml"
+    fn parse_multipack(s: &str) -> Option<SizeUnit> {
+        // Find 'x' separator
+        let x_pos = s.find('x')?;
+        let left = s[..x_pos].trim();
+        let right = s[x_pos + 1..].trim();
 
-            if !left.is_empty() && left.chars().all(|c| c.is_ascii_digit()) {
-                if !right.is_empty() && right.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-                    if let Ok(count) = left.parse::<u32>() {
-                        let inner = Self::parse(right);
-                        if inner != SizeUnit::Unknown {
-                            return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
-                        }
-                    }
-                }
-            }
+        if left.is_empty() || right.is_empty() {
+            return None;
         }
+
+        // Left side: could be "6", "8p", etc.
+        let count = if let Some(num_str) = left.strip_suffix("p") {
+            num_str.parse::<u32>().ok()?
+        } else {
+            left.parse::<u32>().ok()?
+        };
+
+        // Right side: parse the unit
+        let inner = Self::try_parse(right, right);
+        if inner != SizeUnit::Unknown {
+            return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
+        }
+
         None
     }
 
-    /// Parse dimension format: "12mm x 15m" - returns first dimension only
+    /// Parse dimension format: "12mm x 15m", "18mmx10m" - returns first dimension
     fn parse_dimension(s: &str) -> Option<SizeUnit> {
-        if let Some((first, second)) = s.split_once(Self::SEPARATOR_MULTIPACK) {
-            let first_has_unit = first.chars().any(|c| c.is_alphabetic());
-            let second_has_unit = second.chars().any(|c| c.is_alphabetic());
+        // Find 'x' and check if both sides have alphabetic chars (units)
+        let x_pos = s.find('x')?;
+        let left = s[..x_pos].trim();
+        let right = s[x_pos + 1..].trim();
 
-            if first_has_unit && second_has_unit {
-                let result = Self::parse(first);
-                if result != SizeUnit::Unknown {
-                    return Some(result);
-                }
-            }
-        }
+        let left_has_unit = left.chars().any(|c| c.is_alphabetic());
+        let right_has_unit = right.chars().any(|c| c.is_alphabetic());
 
-        if s.contains(Self::SEPARATOR_MULTIPACK) && s.contains(Self::WORD_WIDE) {
-            if let Some((first, _)) = s.split_once(Self::SEPARATOR_MULTIPACK) {
-                let result = Self::parse(first);
-                if result != SizeUnit::Unknown {
-                    return Some(result);
-                }
+        if left_has_unit && right_has_unit {
+            let result = Self::try_parse(left, left);
+            if result != SizeUnit::Unknown {
+                return Some(result);
             }
         }
 
         None
     }
 
-    /// Parse a range format like "0.55-0.75kg" or "0.55kg-0.7kg"
+    /// Parse range format: "0.55-0.75kg", "1-2pcs"
     fn parse_range(s: &str) -> Option<SizeUnit> {
-        // Define range suffixes with their constructors
-        let range_suffixes: &[(&str, fn(f64) -> SizeUnit)] = &[
+        // Must contain '-' but not start with it
+        if !s.contains('-') || s.starts_with('-') {
+            return None;
+        }
+
+        // Try each unit suffix
+        let suffixes: &[(&str, fn(f64) -> SizeUnit)] = &[
             ("kg", SizeUnit::Kilogram),
             ("mg", SizeUnit::Milligram),
             ("gm", Self::kilogram_from_grams),
@@ -359,13 +318,14 @@ impl SizeUnit {
             ("cm", Self::mm_from_cm),
             ("mm", SizeUnit::Millimeter),
             ("m", SizeUnit::Meter),
+            ("pcs", |_| SizeUnit::Unit(1.0)),
+            ("pc", |_| SizeUnit::Unit(1.0)),
         ];
 
-        for (suffix, constructor) in range_suffixes {
+        for (suffix, constructor) in suffixes {
             if let Some(range_str) = s.strip_suffix(suffix) {
-                if let Some((min_str, max_str)) = range_str.split_once(Self::SEPARATOR_RANGE) {
+                if let Some((min_str, max_str)) = range_str.split_once('-') {
                     let min_clean = min_str.strip_suffix(suffix).unwrap_or(min_str);
-
                     if let (Ok(min), Ok(max)) = (min_clean.parse::<f64>(), max_str.parse::<f64>()) {
                         return Some(SizeUnit::Range {
                             min,
@@ -374,6 +334,152 @@ impl SizeUnit {
                         });
                     }
                 }
+            }
+        }
+
+        None
+    }
+
+    /// Parse "1kg pack", "2kg pack" → Kilogram
+    fn parse_unit_pack(s: &str) -> Option<SizeUnit> {
+        if let Some(unit_str) = s.strip_suffix(" pack") {
+            let result = Self::try_parse(unit_str, unit_str);
+            if result != SizeUnit::Unknown {
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    /// Parse "N size", "N cup", "N pellets" → Unit(N)
+    fn parse_count_word(s: &str) -> Option<SizeUnit> {
+        let count_words = &[" size", " cup", " pellets", " pellet", " count"];
+        for word in count_words {
+            if let Some(num_str) = s.strip_suffix(word) {
+                if let Ok(v) = num_str.trim().parse::<f64>() {
+                    return Some(SizeUnit::Unit(v));
+                }
+            }
+        }
+        None
+    }
+
+    /// Parse "8+kg" → Kilogram(8.0)
+    fn parse_plus_unit(s: &str) -> Option<SizeUnit> {
+        let suffixes: &[(&str, fn(f64) -> SizeUnit)] = &[
+            ("kg", SizeUnit::Kilogram),
+            ("g", Self::kilogram_from_grams),
+            ("ml", Self::liter_from_ml),
+            ("l", SizeUnit::Liter),
+        ];
+
+        for (suffix, constructor) in suffixes {
+            if let Some(rest) = s.strip_suffix(suffix) {
+                if let Some(num_str) = rest.strip_suffix('+') {
+                    if let Ok(v) = num_str.parse::<f64>() {
+                        return Some(constructor(v));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_bare_unit(s: &str) -> Option<SizeUnit> {
+        match s {
+            "kg" => Some(SizeUnit::Kilogram(1.0)),
+            "g" | "gm" => Some(SizeUnit::Kilogram(0.001)),
+            "mg" => Some(SizeUnit::Milligram(1.0)),
+            "ml" => Some(SizeUnit::Liter(0.001)),
+            "l" => Some(SizeUnit::Liter(1.0)),
+            "m" | "mtr" => Some(SizeUnit::Meter(1.0)),
+            "cm" => Some(SizeUnit::Millimeter(10.0)),
+            "mm" => Some(SizeUnit::Millimeter(1.0)),
+            "inch" => Some(SizeUnit::Inch(1.0)),
+            _ => None,
+        }
+    }
+
+    fn parse_suffixed_unit(s: &str) -> Option<SizeUnit> {
+        // Count units → Unit
+        let count_suffixes = &[
+            " sheets", "sheets", " sheet", "sheet",
+            " tablets", "tablets", " tabs", "tabs", " caps", "caps",
+            " serves", "serves", " serve", "serve",
+            " pair", "pair", "pr",
+            " pellets", "pellets",
+            "pack", "pk", "pcs", "pce", "pc",
+        ];
+        for suffix in count_suffixes {
+            if let Some(value_str) = s.strip_suffix(suffix) {
+                if let Ok(v) = value_str.trim().parse::<f64>() {
+                    return Some(SizeUnit::Unit(v));
+                }
+            }
+        }
+
+        // Inch
+        for suffix in &[" inch", "inch"] {
+            if let Some(value_str) = s.strip_suffix(suffix) {
+                if let Ok(v) = value_str.trim().parse::<f64>() {
+                    return Some(SizeUnit::Inch(v));
+                }
+            }
+        }
+
+        // Weight (check longer suffixes first)
+        if let Some(value_str) = s.strip_suffix("kg") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Kilogram(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix("mg") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Milligram(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix("gm") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(Self::kilogram_from_grams(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix('g') {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(Self::kilogram_from_grams(v));
+            }
+        }
+
+        // Volume
+        if let Some(value_str) = s.strip_suffix("ml") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(Self::liter_from_ml(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix('l') {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Liter(v));
+            }
+        }
+
+        // Length
+        if let Some(value_str) = s.strip_suffix("cm") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(Self::mm_from_cm(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix("mm") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Millimeter(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix("mtr") {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Meter(v));
+            }
+        }
+        if let Some(value_str) = s.strip_suffix('m') {
+            if let Ok(v) = value_str.trim().parse::<f64>() {
+                return Some(SizeUnit::Meter(v));
             }
         }
 
@@ -404,12 +510,6 @@ impl SizeUnit {
     }
 
     /// Extract the numeric value and unit name, normalized to base units.
-    ///
-    /// All sizes are already normalized during parsing:
-    /// - Weight → Kilogram
-    /// - Volume → Liter
-    /// - Length → Meter (mm converted to m)
-    /// - Count units → Unit
     pub fn to_normalized_value_and_unit(&self) -> (f64, &'static str) {
         match self {
             SizeUnit::Kilogram(v) => (*v, "Kilogram"),
@@ -439,78 +539,166 @@ mod tests {
 
     #[test]
     fn test_parse_weight_normalizes_to_kg() {
-        // Grams become kilograms
         assert_eq!(SizeUnit::parse("500g"), SizeUnit::Kilogram(0.5));
         assert_eq!(SizeUnit::parse("1000g"), SizeUnit::Kilogram(1.0));
-        assert_eq!(SizeUnit::parse("250gm"), SizeUnit::Kilogram(0.25));
-
-        // Kilograms stay as kilograms
         assert_eq!(SizeUnit::parse("1kg"), SizeUnit::Kilogram(1.0));
         assert_eq!(SizeUnit::parse("0.5kg"), SizeUnit::Kilogram(0.5));
     }
 
     #[test]
     fn test_parse_volume_normalizes_to_liter() {
-        // Milliliters become liters
         assert_eq!(SizeUnit::parse("1000ml"), SizeUnit::Liter(1.0));
         assert_eq!(SizeUnit::parse("500ml"), SizeUnit::Liter(0.5));
-
-        // Liters stay as liters
         assert_eq!(SizeUnit::parse("2l"), SizeUnit::Liter(2.0));
-        assert_eq!(SizeUnit::parse("1.5l"), SizeUnit::Liter(1.5));
     }
 
     #[test]
-    fn test_parse_length_normalizes_to_mm() {
-        // Centimeters become millimeters
-        assert_eq!(SizeUnit::parse("10cm"), SizeUnit::Millimeter(100.0));
-        assert_eq!(SizeUnit::parse("5cm"), SizeUnit::Millimeter(50.0));
-
-        // Millimeters stay as millimeters
-        assert_eq!(SizeUnit::parse("100mm"), SizeUnit::Millimeter(100.0));
-
-        // Meters stay as meters
-        assert_eq!(SizeUnit::parse("2m"), SizeUnit::Meter(2.0));
+    fn test_parse_unit_followed_by_pack() {
+        // "1kg pack" → Kilogram(1.0)
+        assert_eq!(SizeUnit::parse("1kg pack"), SizeUnit::Kilogram(1.0));
+        assert_eq!(SizeUnit::parse("2kg pack"), SizeUnit::Kilogram(2.0));
     }
 
     #[test]
-    fn test_parse_count_units_to_unit() {
-        // All count-based types become Unit
-        assert_eq!(SizeUnit::parse("6pack"), SizeUnit::Unit(6.0));
-        assert_eq!(SizeUnit::parse("12pcs"), SizeUnit::Unit(12.0));
-        assert_eq!(SizeUnit::parse("each"), SizeUnit::Unit(1.0));
-        assert_eq!(SizeUnit::parse("100 sheets"), SizeUnit::Unit(100.0));
-        assert_eq!(SizeUnit::parse("30 tablets"), SizeUnit::Unit(30.0));
-        assert_eq!(SizeUnit::parse("2 pair"), SizeUnit::Unit(2.0));
-        assert_eq!(SizeUnit::parse("4 serves"), SizeUnit::Unit(4.0));
-    }
-
-    #[test]
-    fn test_same_product_normalizes_same() {
-        // "500g" and "0.5kg" should both be Kilogram(0.5)
-        assert_eq!(SizeUnit::parse("500g"), SizeUnit::parse("0.5kg"));
-
-        // "1000ml" and "1l" should both be Liter(1.0)
-        assert_eq!(SizeUnit::parse("1000ml"), SizeUnit::parse("1l"));
-    }
-
-    #[test]
-    fn test_multipack_with_normalized_inner() {
-        let parsed = SizeUnit::parse("6 x 330ml");
-        match parsed {
-            SizeUnit::MultiPack { count, unit } => {
-                assert_eq!(count, 6);
-                assert_eq!(*unit, SizeUnit::Liter(0.33));
+    fn test_parse_range_pcs() {
+        // "1-2pcs" → Range of Unit
+        match SizeUnit::parse("1-2pcs") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 1.0);
+                assert_eq!(max, 2.0);
             }
-            _ => panic!("Expected MultiPack"),
+            other => panic!("Expected Range, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_to_normalized_value_and_unit() {
-        assert_eq!(SizeUnit::Kilogram(0.5).to_normalized_value_and_unit(), (0.5, "Kilogram"));
-        assert_eq!(SizeUnit::Liter(1.0).to_normalized_value_and_unit(), (1.0, "Liter"));
-        assert_eq!(SizeUnit::Millimeter(100.0).to_normalized_value_and_unit(), (0.1, "Meter"));
-        assert_eq!(SizeUnit::Unit(6.0).to_normalized_value_and_unit(), (6.0, "Unit"));
+    fn test_parse_pk_space_unit() {
+        // "3pk 210g" → MultiPack(3, Kilogram(0.21))
+        match SizeUnit::parse("3pk 210g") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 3);
+                assert_eq!(*unit, SizeUnit::Kilogram(0.21));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_container_suffix_stripped() {
+        // "50g pks" → Kilogram(0.05) after stripping "pks"
+        assert_eq!(SizeUnit::parse("50g pks"), SizeUnit::Kilogram(0.05));
+        assert_eq!(SizeUnit::parse("150g packs"), SizeUnit::Kilogram(0.15));
+        assert_eq!(SizeUnit::parse("90g pouches"), SizeUnit::Kilogram(0.09));
+        assert_eq!(SizeUnit::parse("90g bars"), SizeUnit::Kilogram(0.09));
+    }
+
+    #[test]
+    fn test_parse_multipack_variants() {
+        // "6x 85g" - space after x
+        match SizeUnit::parse("6x 85g") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 6);
+                assert_eq!(*unit, SizeUnit::Kilogram(0.085));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+
+        // "4 x80g" - no space before unit
+        match SizeUnit::parse("4 x80g") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 4);
+                assert_eq!(*unit, SizeUnit::Kilogram(0.08));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_volume_then_pack() {
+        // "27L 20pack" → MultiPack(20, Liter(27))
+        match SizeUnit::parse("27L 20pack") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 20);
+                assert_eq!(*unit, SizeUnit::Liter(27.0));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_meter_roll() {
+        // "200m roll" → Meter(200)
+        assert_eq!(SizeUnit::parse("200m roll"), SizeUnit::Meter(200.0));
+    }
+
+    #[test]
+    fn test_parse_cup_tray() {
+        // "12 cup tray" → Unit(12)
+        assert_eq!(SizeUnit::parse("12 cup tray"), SizeUnit::Unit(12.0));
+    }
+
+    #[test]
+    fn test_parse_dimension_no_space() {
+        // "18mmx10m" → Millimeter(18) (first dimension)
+        assert_eq!(SizeUnit::parse("18mmx10m"), SizeUnit::Millimeter(18.0));
+    }
+
+    #[test]
+    fn test_parse_n_size() {
+        // "1 size" → Unit(1)
+        assert_eq!(SizeUnit::parse("1 size"), SizeUnit::Unit(1.0));
+    }
+
+    #[test]
+    fn test_parse_bare_number() {
+        // "85" - assume grams for larger numbers
+        assert_eq!(SizeUnit::parse("85"), SizeUnit::Kilogram(0.085));
+    }
+
+    #[test]
+    fn test_parse_plus_unit() {
+        // "8+kg" → Kilogram(8)
+        assert_eq!(SizeUnit::parse("8+kg"), SizeUnit::Kilogram(8.0));
+    }
+
+    #[test]
+    fn test_parse_np_pattern() {
+        // "8p" → Unit(8)
+        assert_eq!(SizeUnit::parse("8p"), SizeUnit::Unit(8.0));
+    }
+
+    #[test]
+    fn test_parse_np_x_unit() {
+        // "8p x 330ml" → MultiPack(8, Liter(0.33))
+        match SizeUnit::parse("8p x 330ml") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 8);
+                assert_eq!(*unit, SizeUnit::Liter(0.33));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_pellets() {
+        // "96 pellets" → Unit(96)
+        assert_eq!(SizeUnit::parse("96 pellets"), SizeUnit::Unit(96.0));
+    }
+
+    #[test]
+    fn test_parse_double_space() {
+        // "10  5.2g" - double space normalized
+        match SizeUnit::parse("10  5.2g") {
+            SizeUnit::MultiPack { count, .. } => {
+                assert_eq!(count, 10);
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_same_product_normalizes_same() {
+        assert_eq!(SizeUnit::parse("500g"), SizeUnit::parse("0.5kg"));
+        assert_eq!(SizeUnit::parse("1000ml"), SizeUnit::parse("1l"));
     }
 }

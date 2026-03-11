@@ -1,29 +1,17 @@
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
-use std::sync::{Mutex, OnceLock};
+//! Semantic product search for query-time matching.
+//!
+//! Uses embeddings to find products that semantically match a search term.
+
 use serde::Serialize;
+use super::embedding::{cosine_similarity, Embeddable, EmbeddingService};
 
-/// Global embedding model - initialized once, reused across calls.
-/// Using OnceLock for lazy initialization and Mutex for mutable access.
-static EMBEDDING_MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
-
-/// Get the embedding model, initializing it if needed.
-/// Downloads the model on first use (~90MB for AllMiniLML6V2).
-fn get_model() -> &'static Mutex<TextEmbedding> {
-    EMBEDDING_MODEL.get_or_init(|| {
-        println!("Initializing embedding model (first use only)...");
-        let model = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::AllMiniLML6V2)
-                .with_show_download_progress(true),
-        )
-        .expect("Failed to initialize embedding model");
-        Mutex::new(model)
-    })
-}
-
+/// Product with search result information.
 #[derive(Debug, Clone, Serialize)]
 pub struct Product {
     pub product_name: String,
     pub brand: String,
+    pub size_value: f64,
+    pub size_unit: String,
     pub price: f64,
     pub supermarket: String,
     pub store_name: String,
@@ -33,50 +21,49 @@ pub struct Product {
     pub similarity_score: f64,
 }
 
-/// Calculate cosine similarity between two vectors.
-///
-/// Cosine similarity measures the cosine of the angle between two vectors,
-/// indicating how similar their directions are regardless of magnitude.
-///
-/// # Formula
-///
-/// ```text
-///                    A · B           Σ(Aᵢ × Bᵢ)
-/// cos(θ) = ─────────────────── = ─────────────────────
-///           ||A|| × ||B||       √Σ(Aᵢ²) × √Σ(Bᵢ²)
-/// ```
-///
-/// # Returns
-///
-/// A value between -1.0 and 1.0:
-/// - `1.0` = vectors point in the same direction (identical)
-/// - `0.0` = vectors are orthogonal (unrelated)
-/// - `-1.0` = vectors point in opposite directions
-///
-/// For normalized embeddings (like those from sentence transformers),
-/// values typically range from 0.0 to 1.0.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
+impl Embeddable for Product {
+    fn to_embedding_text(&self) -> String {
+        if self.brand.is_empty() {
+            self.product_name.clone()
+        } else {
+            format!("{} {}", self.brand, self.product_name)
+        }
     }
+}
 
-    (dot_product / (norm_a * norm_b)) as f64
+/// Trait for semantic product search.
+pub trait SemanticSearch {
+    type Item;
+
+    /// Find items that semantically match the search term.
+    fn find_matches(&self, search_term: &str, threshold: f64) -> Vec<Self::Item>;
+}
+
+/// Semantic product searcher.
+pub struct ProductSearcher<'a> {
+    products: &'a [Product],
+}
+
+impl<'a> ProductSearcher<'a> {
+    pub fn new(products: &'a [Product]) -> Self {
+        Self { products }
+    }
+}
+
+impl<'a> SemanticSearch for ProductSearcher<'a> {
+    type Item = Product;
+
+    fn find_matches(&self, search_term: &str, threshold: f64) -> Vec<Product> {
+        find_matching_products_semantic(search_term, self.products, threshold)
+    }
 }
 
 /// Find products that semantically match the search term using embeddings.
 ///
-/// This uses sentence transformers to understand semantic meaning.
-/// Category-based filtering should be done before calling this function
-/// to ensure products are from the correct category.
-///
 /// # Arguments
 /// * `search_term` - The term to search for
-/// * `products` - List of products to search through (should be pre-filtered by category)
-/// * `threshold` - Minimum similarity score (0.0 to 1.0, recommended: 0.3-0.5 for embeddings)
+/// * `products` - List of products to search through
+/// * `threshold` - Minimum similarity score (0.0 to 1.0, recommended: 0.3-0.5)
 ///
 /// # Returns
 /// Vector of matching products sorted by similarity score (descending)
@@ -89,36 +76,16 @@ pub fn find_matching_products_semantic(
         return Vec::new();
     }
 
-    let model_mutex = get_model();
-    let mut model = model_mutex.lock().expect("Failed to lock model");
+    // Build batch: search term + all product texts
+    let mut texts = vec![search_term.to_string()];
+    texts.extend(products.iter().map(|p| p.to_embedding_text()));
 
-    // Prepare texts for embedding
-    let search_text = search_term.to_string();
-    let product_texts: Vec<String> = products
-        .iter()
-        .map(|p| {
-            if p.brand.is_empty() {
-                p.product_name.clone()
-            } else {
-                format!("{} {}", p.brand, p.product_name)
-            }
-        })
-        .collect();
+    // Generate all embeddings in one batch
+    let all_embeddings = match EmbeddingService::generate_batch(&texts) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
 
-    // Create batch with search term first, then all products
-    let mut all_texts = vec![search_text];
-    all_texts.extend(product_texts);
-
-    // Generate all embeddings in one batch for efficiency
-    let texts_for_embedding: Vec<&str> = all_texts.iter().map(|s| s.as_str()).collect();
-    let all_embeddings = model
-        .embed(texts_for_embedding, None)
-        .expect("Failed to generate embeddings");
-
-    // Release the lock before processing results
-    drop(model);
-
-    // First embedding is the search term
     let search_embedding = &all_embeddings[0];
 
     // Calculate similarity for each product
@@ -145,7 +112,7 @@ pub fn find_matching_products_semantic(
     matches
 }
 
-/// Find the best semantic matches for a search term, sorted by price.
+/// Find the best semantic matches, sorted by price.
 ///
 /// # Arguments
 /// * `search_term` - The term to search for
@@ -178,6 +145,8 @@ mod tests {
             Product {
                 product_name: "Anchor Butter 500g".to_string(),
                 brand: "Anchor".to_string(),
+                size_value: 0.5,
+                size_unit: "Kilogram".to_string(),
                 price: 6.99,
                 supermarket: "PakNSave".to_string(),
                 store_name: "Pak'n Save Albany".to_string(),
@@ -189,6 +158,8 @@ mod tests {
             Product {
                 product_name: "Buttercup Pumpkin".to_string(),
                 brand: "".to_string(),
+                size_value: 1.0,
+                size_unit: "Unit".to_string(),
                 price: 3.99,
                 supermarket: "NewWorld".to_string(),
                 store_name: "New World Mt Eden".to_string(),
@@ -198,36 +169,16 @@ mod tests {
                 similarity_score: 0.0,
             },
             Product {
-                product_name: "Butter Chicken Spring Rolls".to_string(),
-                brand: "Machi".to_string(),
-                price: 5.99,
-                supermarket: "Woolworth".to_string(),
-                store_name: "Countdown Auckland".to_string(),
-                store_id: "store3".to_string(),
-                store_latitude: -36.8485,
-                store_longitude: 174.7633,
-                similarity_score: 0.0,
-            },
-            Product {
                 product_name: "Bread Wholemeal 700g".to_string(),
                 brand: "Vogel's".to_string(),
+                size_value: 0.7,
+                size_unit: "Kilogram".to_string(),
                 price: 4.50,
                 supermarket: "PakNSave".to_string(),
                 store_name: "Pak'n Save Albany".to_string(),
                 store_id: "store1".to_string(),
                 store_latitude: -36.7276,
                 store_longitude: 174.7021,
-                similarity_score: 0.0,
-            },
-            Product {
-                product_name: "Shortbread Cookies".to_string(),
-                brand: "Arnotts".to_string(),
-                price: 4.99,
-                supermarket: "Woolworth".to_string(),
-                store_name: "Countdown Auckland".to_string(),
-                store_id: "store3".to_string(),
-                store_latitude: -36.8485,
-                store_longitude: 174.7633,
                 similarity_score: 0.0,
             },
         ]
@@ -238,7 +189,6 @@ mod tests {
         let products = sample_products();
         let matches = find_matching_products_semantic("butter", &products, 0.3);
 
-        // Should match "Anchor Butter 500g" with high score
         let butter_match = matches.iter().find(|m| m.product_name.contains("Anchor Butter"));
         assert!(butter_match.is_some(), "Should find Anchor Butter");
     }
@@ -248,8 +198,15 @@ mod tests {
         let products = sample_products();
         let matches = find_matching_products_semantic("bread", &products, 0.3);
 
-        // Should match "Bread Wholemeal 700g" with high score
         let bread_match = matches.iter().find(|m| m.product_name.contains("Bread Wholemeal"));
         assert!(bread_match.is_some(), "Should find Bread Wholemeal");
+    }
+
+    #[test]
+    fn test_product_searcher_trait() {
+        let products = sample_products();
+        let searcher = ProductSearcher::new(&products);
+        let matches = searcher.find_matches("butter", 0.3);
+        assert!(!matches.is_empty());
     }
 }

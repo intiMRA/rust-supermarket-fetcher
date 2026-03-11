@@ -6,6 +6,7 @@ use serde_json::Value;
 use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
+use crate::loggers::empty_brand_logger::log_empty_brand;
 use crate::supermarkets::size_unit_types::SizeUnit;
 use crate::supermarkets::supermarket_types::Supermarket;
 use crate::supermarkets::models::category::{Category, find_trace, top_level_category_paths};
@@ -249,8 +250,16 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
                         && let Some(name) = json_item["name"].as_str()
                         && let Some(image_url) = json_item["images"]["big"].as_str()
                         && let Some(price) = json_item["price"]["salePrice"].as_f64()
-                        && let Some(brand_name) = json_item["brand"].as_str()
                     {
+                        let brand_name = json_item["brand"].as_str().unwrap_or("").to_string();
+
+                        // Log original server JSON when brand is empty
+                        if brand_name.is_empty() {
+                            let original_json = serde_json::to_string_pretty(json_item)
+                                .unwrap_or_else(|_| json_item.to_string());
+                            log_empty_brand(&original_json, id, Supermarket::Woolworth.name());
+                        }
+
                         let size = SizeUnit::parse(json_item["size"]["volumeSize"]
                             .as_str()
                             .unwrap_or("Unknown"));
@@ -261,7 +270,7 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
                             supermarket: Supermarket::Woolworth,
                             image_url: image_url.to_string(),
                             price,
-                            brand_name: brand_name.to_string(),
+                            brand_name,
                             size,
                             category: category.clone(),
                         });

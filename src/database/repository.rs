@@ -84,27 +84,6 @@ impl<'a> Repository<'a> {
     }
 
     // -------------------------------------------------------------------------
-    // Helper: Get supermarket ID from enum
-    // -------------------------------------------------------------------------
-
-    fn supermarket_id(supermarket: Supermarket) -> i32 {
-        match supermarket {
-            Supermarket::NewWorld => 1,
-            Supermarket::PakNSave => 2,
-            Supermarket::Woolworth => 3,
-        }
-    }
-
-    /// Get supermarket name string for storing in product_variants.
-    fn supermarket_name(supermarket: Supermarket) -> &'static str {
-        match supermarket {
-            Supermarket::NewWorld => "NewWorld",
-            Supermarket::PakNSave => "PakNSave",
-            Supermarket::Woolworth => "Woolworth",
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // Stores
     // -------------------------------------------------------------------------
 
@@ -117,7 +96,7 @@ impl<'a> Repository<'a> {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 store.id,
-                Self::supermarket_id(supermarket),
+                supermarket.id(),
                 store.name,
                 store.address,
                 store.latitude,
@@ -145,7 +124,7 @@ impl<'a> Repository<'a> {
             return Ok(id);
         }
 
-        let supermarket_id = Self::supermarket_id(supermarket);
+        let supermarket_id = supermarket.id();
 
         self.db.conn.execute(
             "INSERT OR IGNORE INTO categories (display_name, slug, supermarket_id)
@@ -174,7 +153,7 @@ impl<'a> Repository<'a> {
         product_id: i64,
         category_id: i64,
     ) -> rusqlite::Result<i64> {
-        let supermarket_name = Self::supermarket_name(item.supermarket);
+        let supermarket_name = item.supermarket.name();
 
         self.db.conn.execute(
             "INSERT OR REPLACE INTO product_variants
