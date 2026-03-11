@@ -3,11 +3,10 @@ use std::collections::HashMap;
 
 use crate::database::{Database, Queries};
 use crate::matching::semantic_matcher::{find_matching_products_semantic, Product};
-use crate::supermarkets::supermarket_types::Supermarket;
-use crate::utils::geo::haversine_distance_km;
-
-/// Maximum distance in km for NewWorld and PakNSave stores.
-const MAX_DISTANCE_KM: f64 = 20.0;
+use crate::services::common_models::response_product::MatchedProduct;
+pub(crate) use crate::services::common_models::nearby_store::NearbyStore;
+use crate::services::common_models::shopping_list_item::ShoppingListItem;
+use crate::services::utils::common_logic;
 
 /// Number of top matches to return per item.
 const TOP_N_MATCHES: usize = 5;
@@ -41,36 +40,10 @@ pub struct SupermarketInfo {
     pub price: f64,
 }
 
-/// A matched product in the response with prices from multiple stores.
-#[derive(Debug, Serialize)]
-pub struct MatchedProduct {
-    pub product_name: String,
-    pub brand: String,
-    pub size_value: f64,
-    pub size_unit: String,
-    pub similarity_score: f64,
-    pub supermarket_info: Vec<SupermarketInfo>,
-}
-
-/// A single item from the shopping list with its matches.
-#[derive(Debug, Serialize)]
-pub struct ShoppingListItem {
-    pub search_term: String,
-    pub top_matches: Vec<MatchedProduct>,
-}
-
 /// Response payload for shopping list processing.
 #[derive(Debug, Serialize)]
 pub struct ShoppingListResponse {
     pub items: Vec<ShoppingListItem>,
-}
-
-/// Information about a store to query for products.
-#[derive(Clone)]
-struct NearbyStore {
-    id: String,
-    name: String,
-    distance_km: f64,
 }
 
 /// Process a shopping list request using hybrid BM25 + semantic matching.
@@ -87,7 +60,7 @@ pub fn process_shopping_list(
     let queries = Queries::new(db);
 
     // Step 1: Find nearby stores
-    let nearby_stores = find_stores_to_query(
+    let nearby_stores =  common_logic::find_stores_to_query(
         &queries,
         request.latitude,
         request.longitude,
@@ -350,49 +323,6 @@ fn get_bm25_candidates(
         })
         .collect()
 }
-
-/// Find stores to query for products.
-fn find_stores_to_query(
-    queries: &Queries<'_>,
-    user_lat: f64,
-    user_lon: f64,
-) -> Vec<NearbyStore> {
-    let mut stores_to_query = Vec::new();
-    let db_stores = queries.get_all_stores();
-
-    for store in db_stores {
-        let supermarket = Supermarket::from_id(store.supermarket_id);
-        let has_single_store = supermarket.map(|s| s.has_single_store()).unwrap_or(false);
-
-        if has_single_store {
-            // Supermarkets with a single virtual store (e.g., Woolworths) - no distance filtering
-            stores_to_query.push(NearbyStore {
-                id: store.id,
-                name: store.name,
-                distance_km: 0.0,
-            });
-        } else {
-            // Supermarkets with physical stores - filter by distance
-            let distance = haversine_distance_km(
-                user_lat,
-                user_lon,
-                store.latitude,
-                store.longitude,
-            );
-
-            if distance <= MAX_DISTANCE_KM {
-                stores_to_query.push(NearbyStore {
-                    id: store.id,
-                    name: store.name,
-                    distance_km: distance,
-                });
-            }
-        }
-    }
-
-    stores_to_query
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

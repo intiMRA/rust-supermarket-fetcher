@@ -381,6 +381,62 @@ impl<'a> Queries<'a> {
         rows.filter_map(|r| r.ok()).collect()
     }
 
+    /// Search for products in specific categories, filtered by store IDs.
+    pub fn get_paginated_products(
+        &self,
+        store_ids: &[String],
+        page_number: i32,
+        items_per_page: i32,
+    ) -> Vec<ProductWithPriceAndStore> {
+        if store_ids.is_empty() {
+            return Vec::new();
+        }
+        let placeholders: Vec<String> = store_ids.iter().map(|_| "?".to_string()).collect();
+        let query = format!(
+            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+             FROM products p
+             JOIN product_variants v ON p.id = v.product_id
+             JOIN supermarkets s ON v.supermarket = s.name
+             JOIN prices pr ON v.id = pr.variant_id
+             JOIN stores st ON pr.store_id = st.id
+             WHERE st.id IN ({})
+             AND pr.fetched_at = (
+                 SELECT MAX(pr2.fetched_at)
+                 FROM prices pr2
+                 WHERE pr2.variant_id = pr.variant_id AND pr2.store_id = pr.store_id
+             )
+             ORDER BY p.name ASC
+             LIMIT {} OFFSET {}",
+            placeholders.join(", "),
+            items_per_page,
+            page_number * items_per_page
+        );
+        let mut stmt = self.db.conn.prepare(&query).unwrap();
+        let params: Vec<&dyn rusqlite::ToSql> = store_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(ProductWithPriceAndStore {
+                    product_name: row.get(0)?,
+                    brand: row.get(1)?,
+                    size_value: row.get(2)?,
+                    size_unit: row.get(3)?,
+                    price: row.get(4)?,
+                    supermarket: row.get(5)?,
+                    store_id: row.get(6)?,
+                    supermarket_id: row.get(7)?,
+                    store_name: row.get(8)?,
+                    store_latitude: row.get(9)?,
+                    store_longitude: row.get(10)?,
+                })
+            })
+            .unwrap();
+
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
     /// Get products by category.
     pub fn get_products_by_category(&self, category: &str, limit: u32) -> Vec<ProductResult> {
         let mut stmt = self

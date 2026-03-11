@@ -1,9 +1,9 @@
 pub mod shopping_list_service;
+pub mod paginated_list_service;
+pub mod common_models;
+pub mod utils;
 
 pub use shopping_list_service::{
     ShoppingListRequest,
-    ShoppingListResponse,
-    ShoppingListItem,
-    MatchedProduct,
     process_shopping_list,
 };

@@ -7,6 +7,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
             .route("/shopping-list", web::post().to(handlers::shopping_list))
+            .route("/paginated-list", web::post().to(handlers::paginated_list))
             .route("/health", web::get().to(handlers::health)),
     );
 }
