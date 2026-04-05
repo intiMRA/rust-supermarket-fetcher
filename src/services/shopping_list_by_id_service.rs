@@ -1,48 +1,56 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use crate::database::{Database, ProductWithPriceAndStore, Queries};
-use crate::services::common_models::list_commons::SupermarketInfo;
-use crate::services::common_models::response_product::{PaginatedProduct};
-use crate::services::utils::common_logic;
+use std::collections::HashMap;
 
-const ITEMS_PER_PAGE: i32 = 100;
+use crate::database::{Database, ProductWithPriceAndStore, Queries};
+use crate::services::common_models::list_commons::{SupermarketInfo};
+pub(crate) use crate::services::common_models::nearby_store::NearbyStore;
+use crate::services::common_models::response_product::ProductByIdProduct;
+use crate::services::utils::common_logic;
+/// Request payload for shopping list processing.
 #[derive(Debug, Deserialize)]
-pub struct PaginatedItemRequest {
-    page: i32,
+pub struct ShoppingListByIDRequest {
+    pub items: Vec<String>,
     pub latitude: f64,
     pub longitude: f64,
 }
-
 #[derive(Debug, Serialize)]
-pub struct PaginatedItemResponse {
-    items: Vec<PaginatedProduct>,
+pub struct ShoppingListByIDResponse {
+    items: Vec<ProductByIdProduct>,
 }
-pub fn get_list_for_page(
-    request: &PaginatedItemRequest,
-    db: &Database,
 
-) -> PaginatedItemResponse {
+/// Process a shopping list request using hybrid BM25 + semantic matching.
+///
+/// Strategy:
+/// 1. BM25 (keyword search): Fast, handles exact matches well ("milk" → "Fresh Milk")
+/// 2. Semantic (embeddings): Understands meaning ("butter" → "Anchor Butter")
+/// 3. Combined scoring: BM25 (40%) + Semantic (20%) + Price (40%)
+/// 4. Group by product: Return deduplicated products with prices from all stores
+pub fn process_shopping_list_by_ids(
+    request: &ShoppingListByIDRequest,
+    db: &Database,
+) -> ShoppingListByIDResponse {
     let queries = Queries::new(db);
 
     // Step 1: Find nearby stores
-    let nearby_stores = common_logic::find_stores_to_query(
+    let nearby_stores =  common_logic::find_stores_to_query(
         &queries,
         request.latitude,
         request.longitude,
     );
 
     if nearby_stores.is_empty() {
-        return PaginatedItemResponse {
+        return ShoppingListByIDResponse {
             items: Vec::new()
         };
     }
 
     let store_ids: Vec<String> = nearby_stores.iter().map(|s| s.id.clone()).collect();
-    let store_map: HashMap<String, &crate::services::shopping_list_service::NearbyStore> = nearby_stores
+    let store_map: HashMap<String, &NearbyStore> = nearby_stores
         .iter()
         .map(|s| (s.id.clone(), s))
         .collect();
-    let products = queries.get_paginated_products(&store_ids, request.page, ITEMS_PER_PAGE);
+    
+    let products = queries.get_products_by_ids(&store_ids, &request.items);
     let mut product_groups: HashMap<String, Vec<ProductWithPriceAndStore>> = HashMap::new();
     for p in products {
         let key = format!("{}|{}|{}", p.product_name.to_lowercase(), p.size_value, p.size_unit.to_lowercase());
@@ -50,7 +58,7 @@ pub fn get_list_for_page(
     }
 
     // Convert groups to MatchedProduct with supermarket_info array
-    let grouped_products: Vec<PaginatedProduct> = product_groups
+    let grouped_products: Vec<ProductByIdProduct> = product_groups
         .into_iter()
         .map(|(_, mut group)| {
             // Sort stores by price within each product
@@ -92,7 +100,7 @@ pub fn get_list_for_page(
             let mut supermarket_info: Vec<SupermarketInfo> = store_prices.into_values().collect();
             supermarket_info.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
 
-            PaginatedProduct {
+            ProductByIdProduct {
                 product_id,
                 product_name,
                 brand,
@@ -102,8 +110,5 @@ pub fn get_list_for_page(
             }
         })
         .collect();
-
-    PaginatedItemResponse {
-        items: grouped_products,
-    }
+    ShoppingListByIDResponse { items: grouped_products }
 }

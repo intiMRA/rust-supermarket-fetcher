@@ -75,6 +75,10 @@ impl FetchController {
         // PHASE 3: In-memory deduplication + batch database insert
         println!("\n=== PHASE 3: Deduplication & Database Insert ===");
 
+        // Generate fetch stamp BEFORE inserting (consistent for all items)
+        let fetch_stamp = Repository::generate_fetch_stamp();
+        println!("Fetch stamp: {}", fetch_stamp);
+
         // Build ItemWithStore references
         let items_with_stores: Vec<ItemWithStore<'_>> = all_results
             .iter()
@@ -88,8 +92,17 @@ impl FetchController {
             .collect();
 
         // Single batch insert with in-memory deduplication
-        repo.insert_all_items(&items_with_stores)
+        repo.insert_all_items(&items_with_stores, &fetch_stamp)
             .expect("Failed to insert items");
+
+        // PHASE 4: Update valid fetch stamp and cleanup stale data
+        println!("\n=== PHASE 4: Updating fetch stamp & cleaning stale data ===");
+        repo.set_valid_fetch_stamp(&fetch_stamp)
+            .expect("Failed to set valid fetch stamp");
+
+        let stale_prices = repo.cleanup_stale_prices()
+            .expect("Failed to cleanup stale prices");
+        println!("Cleaned up {} stale prices", stale_prices);
 
         // Print final stats
         if let Ok(stats) = repo.get_deduplication_stats() {

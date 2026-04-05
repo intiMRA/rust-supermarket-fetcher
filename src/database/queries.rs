@@ -5,6 +5,7 @@ use super::Database;
 /// Result type for product search with price and store information.
 #[derive(Debug, Clone)]
 pub struct ProductWithPriceAndStore {
+    pub product_id: i32,
     pub product_name: String,
     pub brand: String,
     pub size_value: f64,
@@ -54,6 +55,7 @@ impl<'a> Queries<'a> {
              JOIN product_variants v ON p.id = v.product_id
              LEFT JOIN categories c ON v.category_id = c.id
              WHERE p.name LIKE ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              GROUP BY p.id
              ORDER BY p.name
              LIMIT 50",
@@ -92,6 +94,7 @@ impl<'a> Queries<'a> {
              JOIN product_variants v ON p.id = v.product_id
              JOIN prices pr ON v.id = pr.variant_id
              WHERE p.name LIKE ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              GROUP BY p.name, v.supermarket
              ORDER BY MIN(pr.price)",
             )
@@ -125,6 +128,7 @@ impl<'a> Queries<'a> {
              JOIN prices pr ON v.id = pr.variant_id
              JOIN stores st ON pr.store_id = st.id
              WHERE p.name LIKE ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              ORDER BY pr.price ASC
              LIMIT ?2",
             )
@@ -158,6 +162,7 @@ impl<'a> Queries<'a> {
              JOIN prices pr ON v.id = pr.variant_id
              JOIN stores st ON pr.store_id = st.id
              WHERE v.product_id = ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -239,6 +244,7 @@ impl<'a> Queries<'a> {
             .prepare(
                 "SELECT v.supermarket, COUNT(DISTINCT v.product_id)
              FROM product_variants v
+             WHERE v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              GROUP BY v.supermarket
              ORDER BY COUNT(*) DESC",
             )
@@ -338,7 +344,7 @@ impl<'a> Queries<'a> {
         let store_in_clause = store_placeholders.join(", ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
@@ -348,6 +354,7 @@ impl<'a> Queries<'a> {
              JOIN stores st ON pr.store_id = st.id
              WHERE v.category_id IN ({})
              AND st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -363,17 +370,18 @@ impl<'a> Queries<'a> {
         let rows = stmt
             .query_map([], |row| {
                 Ok(ProductWithPriceAndStore {
-                    product_name: row.get(0)?,
-                    brand: row.get(1)?,
-                    size_value: row.get(2)?,
-                    size_unit: row.get(3)?,
-                    price: row.get(4)?,
-                    supermarket: row.get(5)?,
-                    store_id: row.get(6)?,
-                    supermarket_id: row.get(7)?,
-                    store_name: row.get(8)?,
-                    store_latitude: row.get(9)?,
-                    store_longitude: row.get(10)?,
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
                 })
             })
             .unwrap();
@@ -393,7 +401,7 @@ impl<'a> Queries<'a> {
         }
         let placeholders: Vec<String> = store_ids.iter().map(|_| "?".to_string()).collect();
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
@@ -402,6 +410,7 @@ impl<'a> Queries<'a> {
              JOIN prices pr ON v.id = pr.variant_id
              JOIN stores st ON pr.store_id = st.id
              WHERE st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -419,17 +428,18 @@ impl<'a> Queries<'a> {
         let rows = stmt
             .query_map(params.as_slice(), |row| {
                 Ok(ProductWithPriceAndStore {
-                    product_name: row.get(0)?,
-                    brand: row.get(1)?,
-                    size_value: row.get(2)?,
-                    size_unit: row.get(3)?,
-                    price: row.get(4)?,
-                    supermarket: row.get(5)?,
-                    store_id: row.get(6)?,
-                    supermarket_id: row.get(7)?,
-                    store_name: row.get(8)?,
-                    store_latitude: row.get(9)?,
-                    store_longitude: row.get(10)?,
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
                 })
             })
             .unwrap();
@@ -448,6 +458,7 @@ impl<'a> Queries<'a> {
              JOIN product_variants v ON p.id = v.product_id
              LEFT JOIN categories c ON v.category_id = c.id
              WHERE c.display_name LIKE ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              GROUP BY p.id
              ORDER BY p.name
              LIMIT ?2",
@@ -486,6 +497,7 @@ impl<'a> Queries<'a> {
              JOIN product_variants v ON p.id = v.product_id
              JOIN prices pr ON v.id = pr.variant_id
              WHERE p.brand LIKE ?1
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              GROUP BY p.id
              ORDER BY p.name
              LIMIT 50",
@@ -606,7 +618,7 @@ impl<'a> Queries<'a> {
         let store_in_clause = store_placeholders.join(", ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
@@ -616,6 +628,7 @@ impl<'a> Queries<'a> {
              JOIN stores st ON pr.store_id = st.id
              WHERE ({})
              AND st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -631,17 +644,18 @@ impl<'a> Queries<'a> {
         let rows = stmt
             .query_map([], |row| {
                 Ok(ProductWithPriceAndStore {
-                    product_name: row.get(0)?,
-                    brand: row.get(1)?,
-                    size_value: row.get(2)?,
-                    size_unit: row.get(3)?,
-                    price: row.get(4)?,
-                    supermarket: row.get(5)?,
-                    store_id: row.get(6)?,
-                    supermarket_id: row.get(7)?,
-                    store_name: row.get(8)?,
-                    store_latitude: row.get(9)?,
-                    store_longitude: row.get(10)?,
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
                 })
             })
             .unwrap();
@@ -669,7 +683,7 @@ impl<'a> Queries<'a> {
         let where_clause = word_conditions.join(" AND ");
 
         let query = format!(
-            "SELECT p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
              FROM products p
@@ -678,6 +692,7 @@ impl<'a> Queries<'a> {
              JOIN prices pr ON v.id = pr.variant_id
              JOIN stores st ON pr.store_id = st.id
              WHERE ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -693,17 +708,18 @@ impl<'a> Queries<'a> {
         let rows = stmt
             .query_map([], |row| {
                 Ok(ProductWithPriceAndStore {
-                    product_name: row.get(0)?,
-                    brand: row.get(1)?,
-                    size_value: row.get(2)?,
-                    size_unit: row.get(3)?,
-                    price: row.get(4)?,
-                    supermarket: row.get(5)?,
-                    store_id: row.get(6)?,
-                    supermarket_id: row.get(7)?,
-                    store_name: row.get(8)?,
-                    store_latitude: row.get(9)?,
-                    store_longitude: row.get(10)?,
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
                 })
             })
             .unwrap();
@@ -755,6 +771,7 @@ impl<'a> Queries<'a> {
              JOIN stores st ON pr.store_id = st.id
              WHERE products_fts MATCH ?1
              AND st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
              AND pr.fetched_at = (
                  SELECT MAX(pr2.fetched_at)
                  FROM prices pr2
@@ -792,8 +809,64 @@ impl<'a> Queries<'a> {
             Err(_) => Vec::new(),
         }
     }
-}
+    // -------------------------------------------------------------------------
+    // Products by id
+    // -------------------------------------------------------------------------
+    pub fn get_products_by_ids(
+        &self,
+        store_ids: &[String],
+        product_ids: &[String]
+    ) -> Vec<ProductWithPriceAndStore> {
+        if store_ids.is_empty() {
+            return Vec::new();
+        }
+        let placeholders: Vec<String> = store_ids.iter().map(|_| "?".to_string()).collect();
+        let query = format!(
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+             FROM products p
+             JOIN product_variants v ON p.id = v.product_id
+             JOIN supermarkets s ON v.supermarket = s.name
+             JOIN prices pr ON v.id = pr.variant_id
+             JOIN stores st ON pr.store_id = st.id
+             WHERE st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
+             AND pr.fetched_at = (
+                 SELECT MAX(pr2.fetched_at)
+                 FROM prices pr2
+                 WHERE pr2.variant_id = pr.variant_id AND pr2.store_id = pr.store_id
+             )
+             AND p.id in ({})
+             ORDER BY p.name ASC",
+            placeholders.join(", "),
+            product_ids.join(", "),
+        );
+        let mut stmt = self.db.conn.prepare(&query).unwrap();
+        let params: Vec<&dyn rusqlite::ToSql> = store_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(ProductWithPriceAndStore {
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
+                })
+            })
+            .unwrap();
+
+        rows.filter_map(|r| r.ok()).collect()
+    }
+}
 // -----------------------------------------------------------------------------
 // Result Types
 // -----------------------------------------------------------------------------
@@ -859,7 +932,7 @@ pub struct ProductPriceInfo {
 /// Product with BM25 relevance score from full-text search.
 #[derive(Debug, Clone)]
 pub struct ProductWithBm25Score {
-    pub product_id: i64,
+    pub product_id: i32,
     pub product_name: String,
     pub brand: String,
     pub size_value: f64,

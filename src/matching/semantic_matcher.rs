@@ -8,6 +8,7 @@ use super::embedding::{cosine_similarity, Embeddable, EmbeddingService};
 /// Product with search result information.
 #[derive(Debug, Clone, Serialize)]
 pub struct Product {
+    pub product_id: i32,
     pub product_name: String,
     pub brand: String,
     pub size_value: f64,
@@ -143,6 +144,7 @@ mod tests {
     fn sample_products() -> Vec<Product> {
         vec![
             Product {
+                product_id: 1,
                 product_name: "Anchor Butter 500g".to_string(),
                 brand: "Anchor".to_string(),
                 size_value: 0.5,
@@ -156,6 +158,7 @@ mod tests {
                 similarity_score: 0.0,
             },
             Product {
+                product_id: 2,
                 product_name: "Buttercup Pumpkin".to_string(),
                 brand: "".to_string(),
                 size_value: 1.0,
@@ -169,6 +172,7 @@ mod tests {
                 similarity_score: 0.0,
             },
             Product {
+                product_id: 3,
                 product_name: "Bread Wholemeal 700g".to_string(),
                 brand: "Vogel's".to_string(),
                 size_value: 0.7,

@@ -7,6 +7,7 @@ use crate::services::{
     ShoppingListRequest,
 };
 use crate::services::paginated_list_service::{get_list_for_page, PaginatedItemRequest};
+use crate::services::shopping_list_by_id_service::{process_shopping_list_by_ids, ShoppingListByIDRequest};
 
 /// Application state shared across handlers.
 pub struct AppState {
@@ -26,6 +27,16 @@ pub async fn shopping_list(
 ) -> impl Responder {
     let db = data.db.lock().await;
     let response = process_shopping_list(&request, &db);
+
+    HttpResponse::Ok().json(response)
+}
+
+pub async fn shopping_list_by_ids(
+    data: web::Data<AppState>,
+    request: web::Json<ShoppingListByIDRequest>,
+) -> impl Responder {
+    let db = data.db.lock().await;
+    let response = process_shopping_list_by_ids(&request, &db);
 
     HttpResponse::Ok().json(response)
 }

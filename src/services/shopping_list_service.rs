@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use crate::database::{Database, Queries};
 use crate::matching::semantic_matcher::{find_matching_products_semantic, Product};
+use crate::services::common_models::list_commons::{SupermarketInfo};
 use crate::services::common_models::response_product::MatchedProduct;
 pub(crate) use crate::services::common_models::nearby_store::NearbyStore;
 use crate::services::common_models::shopping_list_item::ShoppingListItem;
@@ -29,15 +30,6 @@ pub struct ShoppingListRequest {
     pub items: Vec<String>,
     pub latitude: f64,
     pub longitude: f64,
-}
-
-/// Price info from a specific supermarket/store.
-#[derive(Debug, Serialize, Clone)]
-pub struct SupermarketInfo {
-    pub supermarket: String,
-    pub store_name: String,
-    pub distance_km: f64,
-    pub price: f64,
 }
 
 /// Response payload for shopping list processing.
@@ -121,6 +113,7 @@ fn process_single_item(
             let key = format!("{}|{}|{}", p.product_name, p.store_id, p.price);
             if seen_keys.insert(key) {
                 candidates.push(Product {
+                    product_id: p.product_id,
                     product_name: p.product_name,
                     brand: p.brand,
                     size_value: p.size_value,
@@ -209,6 +202,7 @@ fn process_single_item(
 
             // Take the best score from the group
             let best_score = group.iter().map(|p| p.similarity_score).fold(0.0_f64, f64::max);
+            let product_id = group[0].product_id.clone();
             let product_name = group[0].product_name.clone();
             let brand = group[0].brand.clone();
             let size_value = group[0].size_value;
@@ -245,6 +239,7 @@ fn process_single_item(
             supermarket_info.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
 
             MatchedProduct {
+                product_id,
                 product_name,
                 brand,
                 size_value,
@@ -283,6 +278,7 @@ fn get_bm25_candidates(
         return db_products
             .into_iter()
             .map(|p| Product {
+                product_id: p.product_id,
                 product_name: p.product_name,
                 brand: p.brand,
                 size_value: p.size_value,
@@ -308,6 +304,7 @@ fn get_bm25_candidates(
         .map(|r| {
             let normalized_bm25 = 1.0 - ((r.bm25_score - min_bm25) / bm25_range);
             Product {
+                product_id: r.product_id,
                 product_name: r.product_name,
                 brand: r.brand,
                 size_value: r.size_value,
@@ -358,6 +355,7 @@ mod tests {
     #[test]
     fn test_matched_product_serialization() {
         let product = MatchedProduct {
+            product_id: 1,
             product_name: "Anchor Milk 2L".to_string(),
             brand: "Anchor".to_string(),
             size_value: 0.0,

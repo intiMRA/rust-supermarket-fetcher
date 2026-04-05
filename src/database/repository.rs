@@ -152,13 +152,14 @@ impl<'a> Repository<'a> {
         item: &SuperMarketItem,
         product_id: i64,
         category_id: i64,
+        fetch_stamp: &str,
     ) -> rusqlite::Result<i64> {
         let supermarket_name = item.supermarket.name();
 
         self.db.conn.execute(
             "INSERT OR REPLACE INTO product_variants
-             (product_id, external_id, original_name, image_url, category_id, supermarket)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (product_id, external_id, original_name, image_url, category_id, supermarket, fetch_stamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 product_id,
                 item.id,
@@ -166,6 +167,7 @@ impl<'a> Repository<'a> {
                 item.image_url,
                 category_id,
                 supermarket_name,
+                fetch_stamp,
             ],
         )?;
 
@@ -176,6 +178,51 @@ impl<'a> Repository<'a> {
         )?;
 
         Ok(variant_id)
+    }
+
+    // -------------------------------------------------------------------------
+    // Fetch Stamp Management
+    // -------------------------------------------------------------------------
+
+    /// Get the current valid fetch stamp from metadata.
+    pub fn get_valid_fetch_stamp(&self) -> rusqlite::Result<Option<String>> {
+        match self.db.conn.query_row(
+            "SELECT value FROM metadata WHERE key = 'valid_fetch_stamp'",
+            [],
+            |row| row.get(0),
+        ) {
+            Ok(stamp) => Ok(Some(stamp)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Set the valid fetch stamp in metadata.
+    pub fn set_valid_fetch_stamp(&self, stamp: &str) -> rusqlite::Result<()> {
+        self.db.conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('valid_fetch_stamp', ?1)",
+            params![stamp],
+        )?;
+        Ok(())
+    }
+
+    /// Generate a new fetch stamp (ISO 8601 timestamp).
+    pub fn generate_fetch_stamp() -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
+
+    /// Delete prices for variants with stale fetch stamps.
+    /// Call this after updating the valid_fetch_stamp.
+    pub fn cleanup_stale_prices(&self) -> rusqlite::Result<usize> {
+        let deleted = self.db.conn.execute(
+            "DELETE FROM prices WHERE variant_id IN (
+                SELECT pv.id FROM product_variants pv
+                WHERE pv.fetch_stamp != (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
+                   OR pv.fetch_stamp IS NULL
+            )",
+            [],
+        )?;
+        Ok(deleted)
     }
 
     // -------------------------------------------------------------------------
@@ -296,7 +343,11 @@ impl<'a> Repository<'a> {
     /// 1. In-memory deduplication: Group by (name, brand, size)
     /// 2. Batch embeddings: Generate all embeddings in one call
     /// 3. Category caching: Avoid repeated category lookups
-    pub fn insert_all_items(&self, items_with_stores: &[ItemWithStore<'_>]) -> rusqlite::Result<()> {
+    ///
+    /// The `fetch_stamp` is used to mark variants as current.
+    /// After calling this, call `set_valid_fetch_stamp` to update metadata,
+    /// then `cleanup_stale_prices` to remove prices for stale variants.
+    pub fn insert_all_items(&self, items_with_stores: &[ItemWithStore<'_>], fetch_stamp: &str) -> rusqlite::Result<()> {
         if items_with_stores.is_empty() {
             return Ok(());
         }
@@ -453,7 +504,7 @@ impl<'a> Repository<'a> {
             };
 
             // Insert variant
-            let variant_id = match self.insert_variant(iws.item, product_id, category_id) {
+            let variant_id = match self.insert_variant(iws.item, product_id, category_id, fetch_stamp) {
                 Ok(id) => {
                     variants_inserted += 1;
                     id
@@ -488,6 +539,7 @@ impl<'a> Repository<'a> {
         store: &Store,
         supermarket: Supermarket,
         items: &[SuperMarketItem],
+        fetch_stamp: &str,
     ) -> rusqlite::Result<()> {
         let items_with_stores: Vec<ItemWithStore<'_>> = items
             .iter()
@@ -498,7 +550,7 @@ impl<'a> Repository<'a> {
             })
             .collect();
 
-        self.insert_all_items(&items_with_stores)
+        self.insert_all_items(&items_with_stores, fetch_stamp)
     }
 
     // -------------------------------------------------------------------------
