@@ -866,6 +866,64 @@ impl<'a> Queries<'a> {
 
         rows.filter_map(|r| r.ok()).collect()
     }
+
+    // -------------------------------------------------------------------------
+    // Products by search string
+    // -------------------------------------------------------------------------
+    pub fn get_products_by_search_string(
+        &self,
+        store_ids: &[String],
+        search_string: &String,
+    ) -> Vec<ProductWithPriceAndStore> {
+        if store_ids.is_empty() {
+            return Vec::new();
+        }
+        let placeholders: Vec<String> = store_ids.iter().map(|_| "?".to_string()).collect();
+        let query = format!(
+            "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
+                    pr.price, v.supermarket, st.id, s.id,
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+             FROM products p
+             JOIN product_variants v ON p.id = v.product_id
+             JOIN supermarkets s ON v.supermarket = s.name
+             JOIN prices pr ON v.id = pr.variant_id
+             JOIN stores st ON pr.store_id = st.id
+             WHERE st.id IN ({})
+             AND v.fetch_stamp = (SELECT value FROM metadata WHERE key = 'valid_fetch_stamp')
+             AND pr.fetched_at = (
+                 SELECT MAX(pr2.fetched_at)
+                 FROM prices pr2
+                 WHERE pr2.variant_id = pr.variant_id AND pr2.store_id = pr.store_id
+             )
+             AND p.name LIKE '%{}%'
+             ORDER BY p.name ASC",
+            placeholders.join(", "),
+            search_string,
+        );
+        let mut stmt = self.db.conn.prepare(&query).unwrap();
+        let params: Vec<&dyn rusqlite::ToSql> = store_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(ProductWithPriceAndStore {
+                    product_id: row.get(0)?,
+                    product_name: row.get(1)?,
+                    brand: row.get(2)?,
+                    size_value: row.get(3)?,
+                    size_unit: row.get(4)?,
+                    price: row.get(5)?,
+                    supermarket: row.get(6)?,
+                    store_id: row.get(7)?,
+                    supermarket_id: row.get(8)?,
+                    store_name: row.get(9)?,
+                    store_latitude: row.get(10)?,
+                    store_longitude: row.get(11)?,
+                })
+            })
+            .unwrap();
+
+        rows.filter_map(|r| r.ok()).collect()
+    }
 }
 // -----------------------------------------------------------------------------
 // Result Types
