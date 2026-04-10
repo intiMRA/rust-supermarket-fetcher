@@ -17,6 +17,7 @@ pub struct ProductWithPriceAndStore {
     pub store_id: String,
     pub store_latitude: f64,
     pub store_longitude: f64,
+    pub image_url: String,
 }
 
 /// Store information from the database.
@@ -346,7 +347,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -382,6 +383,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -403,7 +405,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -440,6 +442,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -620,7 +623,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -656,6 +659,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -685,7 +689,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -720,6 +724,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -763,7 +768,7 @@ impl<'a> Queries<'a> {
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id,
                     st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0),
-                    bm25(products_fts) as bm25_score
+                    bm25(products_fts) as bm25_score, v.image_url
              FROM products_fts fts
              JOIN products p ON fts.rowid = p.id
              JOIN product_variants v ON p.id = v.product_id
@@ -801,6 +806,7 @@ impl<'a> Queries<'a> {
                 store_latitude: row.get(9)?,
                 store_longitude: row.get(10)?,
                 bm25_score: row.get(11)?,
+                image_url: row.get(12)?,
             })
         });
 
@@ -824,7 +830,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -860,6 +866,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -882,7 +889,7 @@ impl<'a> Queries<'a> {
         let query = format!(
             "SELECT p.id, p.name, COALESCE(p.brand, ''), COALESCE(p.size_value, 0.0), COALESCE(p.size_unit, ''),
                     pr.price, v.supermarket, st.id, s.id,
-                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0)
+                    st.name, COALESCE(st.latitude, 0.0), COALESCE(st.longitude, 0.0), v.image_url
              FROM products p
              JOIN product_variants v ON p.id = v.product_id
              JOIN supermarkets s ON v.supermarket = s.name
@@ -918,6 +925,7 @@ impl<'a> Queries<'a> {
                     store_name: row.get(9)?,
                     store_latitude: row.get(10)?,
                     store_longitude: row.get(11)?,
+                    image_url: row.get(12)?,
                 })
             })
             .unwrap();
@@ -1003,6 +1011,7 @@ pub struct ProductWithBm25Score {
     pub store_longitude: f64,
     /// BM25 score (negative, more negative = better match)
     pub bm25_score: f64,
+    pub image_url: String,
 }
 
 // -----------------------------------------------------------------------------

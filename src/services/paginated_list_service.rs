@@ -50,12 +50,12 @@ pub fn get_list_for_page(
     }
 
     // Convert groups to MatchedProduct with supermarket_info array
-    let grouped_products: Vec<PaginatedProduct> = product_groups
+    let mut grouped_products: Vec<PaginatedProduct> = product_groups
         .into_iter()
         .map(|(_, mut group)| {
             // Sort stores by price within each product
             group.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
-            
+
             let product_id = group[0].product_id.clone();
             let product_name = group[0].product_name.clone();
             let brand = group[0].brand.clone();
@@ -75,6 +75,7 @@ pub fn get_list_for_page(
                     store_name: p.store_name,
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
+                    image_url: p.image_url.clone(),
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
@@ -93,7 +94,7 @@ pub fn get_list_for_page(
             supermarket_info.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
 
             PaginatedProduct {
-                product_id,
+                product_id: product_id.into(),
                 product_name,
                 brand,
                 size_value,
@@ -102,7 +103,7 @@ pub fn get_list_for_page(
             }
         })
         .collect();
-
+    grouped_products.sort_by(|a, b| a.product_name.cmp(&b.product_name));
     PaginatedItemResponse {
         items: grouped_products,
     }

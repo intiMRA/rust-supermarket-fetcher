@@ -20,6 +20,7 @@ pub struct Product {
     pub store_latitude: f64,
     pub store_longitude: f64,
     pub similarity_score: f64,
+    pub image_url: String,
 }
 
 impl Embeddable for Product {
@@ -156,6 +157,7 @@ mod tests {
                 store_latitude: -36.7276,
                 store_longitude: 174.7021,
                 similarity_score: 0.0,
+                image_url: "http://example.com".to_string(),
             },
             Product {
                 product_id: 2,
@@ -170,6 +172,7 @@ mod tests {
                 store_latitude: -36.8762,
                 store_longitude: 174.7567,
                 similarity_score: 0.0,
+                image_url: "http://example.com".to_string(),
             },
             Product {
                 product_id: 3,
@@ -184,6 +187,7 @@ mod tests {
                 store_latitude: -36.7276,
                 store_longitude: 174.7021,
                 similarity_score: 0.0,
+                image_url: "http://example.com".to_string(),
             },
         ]
     }

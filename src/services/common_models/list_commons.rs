@@ -7,4 +7,5 @@ pub struct SupermarketInfo {
     pub store_name: String,
     pub distance_km: f64,
     pub price: f64,
+    pub image_url: String,
 }

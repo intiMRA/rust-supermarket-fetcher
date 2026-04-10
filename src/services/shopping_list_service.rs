@@ -125,6 +125,7 @@ fn process_single_item(
                     store_latitude: p.store_latitude,
                     store_longitude: p.store_longitude,
                     similarity_score: 0.7,
+                    image_url: p.image_url,
                 });
             }
         }
@@ -221,6 +222,7 @@ fn process_single_item(
                     store_name: p.store_name,
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
+                    image_url: p.image_url.clone(),
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
@@ -290,6 +292,7 @@ fn get_bm25_candidates(
                 store_latitude: p.store_latitude,
                 store_longitude: p.store_longitude,
                 similarity_score: 0.5,
+                image_url: p.image_url
             })
             .collect();
     }
@@ -316,6 +319,7 @@ fn get_bm25_candidates(
                 store_latitude: r.store_latitude,
                 store_longitude: r.store_longitude,
                 similarity_score: normalized_bm25,
+                image_url: r.image_url,
             }
         })
         .collect()
@@ -345,6 +349,7 @@ mod tests {
             store_name: "Pak'n Save Albany".to_string(),
             distance_km: 2.5,
             price: 5.99,
+            image_url: "https://picsum.pkns".to_string(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -367,12 +372,14 @@ mod tests {
                     store_name: "Pak'n Save Albany".to_string(),
                     distance_km: 2.5,
                     price: 5.99,
+                    image_url: "https://picsum.pkns".to_string(),
                 },
                 SupermarketInfo {
                     supermarket: "NewWorld".to_string(),
                     store_name: "New World Mt Eden".to_string(),
                     distance_km: 3.1,
                     price: 6.29,
+                    image_url: "https://picsum.pkns".to_string(),
                 },
             ],
         };

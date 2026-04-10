@@ -83,6 +83,7 @@ pub fn process_shopping_list_by_ids(
                     store_name: p.store_name,
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
+                    image_url: p.image_url.clone(),
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price

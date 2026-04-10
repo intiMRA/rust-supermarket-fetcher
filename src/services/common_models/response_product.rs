@@ -15,7 +15,7 @@ pub struct MatchedProduct {
 
 #[derive(Debug, Serialize)]
 pub struct PaginatedProduct {
-    pub product_id: i32,
+    pub product_id: i64,
     pub product_name: String,
     pub brand: String,
     pub size_value: f64,
