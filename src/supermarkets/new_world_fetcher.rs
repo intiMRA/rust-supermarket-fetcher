@@ -302,7 +302,13 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for NewWo
 
         let mut items: Vec<SuperMarketItem> = Vec::new();
         for category_path in &category_paths {
-            let category_items = self.fetch_items_for_category_path(store_id, category_path).await?;
+            let category_items = match self.fetch_items_for_category_path(store_id, category_path).await {
+                Ok(items) => items,
+                Err(e) => {
+                    self.logger.error(&format!("Failed to fetch category '{:?}': {} — skipping", category_path, e));
+                    continue;
+                }
+            };
             items.extend(category_items);
         }
 

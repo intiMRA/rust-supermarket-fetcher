@@ -35,6 +35,18 @@ async fn main() -> std::io::Result<()> {
             "serve" => {
                 run_server().await
             }
+            "restore-backup" => {
+                let db_path = "data/supermarket.db";
+                let backup_path = "data/supermarket_backup.db";
+                if !std::path::Path::new(backup_path).exists() {
+                    eprintln!("No backup found at {}. Run 'cargo run -- fetch' first to create a backup.", backup_path);
+                    std::process::exit(1);
+                }
+                std::fs::copy(backup_path, db_path)
+                    .expect("Failed to restore backup");
+                println!("Backup restored: {} -> {}", backup_path, db_path);
+                Ok(())
+            }
             _ => {
                 print_usage();
                 Ok(())
@@ -81,9 +93,11 @@ fn print_usage() {
     println!("=========================");
     println!();
     println!("Usage:");
-    println!("  cargo run -- fetch   # Fetch prices from all supermarkets");
-    println!("  cargo run -- query   # Run sample database queries");
-    println!("  cargo run -- serve   # Start the REST API server");
+    println!("  cargo run -- fetch              # Fetch prices from all supermarkets");
+    println!("  cargo run -- query              # Run sample database queries");
+    println!("  cargo run -- serve              # Start the REST API server");
+    println!("  cargo run -- --restore-backup   # Restore database from backup");
     println!();
     println!("Database: data/supermarket.db");
+    println!("Backup:   data/supermarket_backup.db");
 }

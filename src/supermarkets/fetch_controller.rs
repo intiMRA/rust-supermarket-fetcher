@@ -35,6 +35,15 @@ impl FetchController {
         clear_parse_log();
         clear_empty_brand_log();
 
+        // Backup current database before fetching new data
+        let db_path = std::path::Path::new("data/supermarket.db");
+        if db_path.exists() {
+            let backup_path = "data/supermarket_backup.db";
+            std::fs::copy(db_path, backup_path)
+                .expect("Failed to create backup of database");
+            println!("Backup created: {}", backup_path);
+        }
+
         // Open database
         let db = Database::open("data/supermarket.db").expect("Failed to open database");
         let repo = Repository::new(&db);
@@ -152,7 +161,13 @@ impl FetchController {
         for (i, store) in stores.into_iter().enumerate() {
             println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
 
-            let items = fetcher.get_items(Some(store.id.as_str())).await?;
+            let items = match fetcher.get_items(Some(store.id.as_str())).await {
+                Ok(items) => items,
+                Err(e) => {
+                    eprintln!("[NewWorld] Error fetching store '{}': {} — skipping", store.name, e);
+                    continue;
+                }
+            };
 
             println!("[NewWorld] Fetched {} items for {}", items.len(), store.name);
 
@@ -180,7 +195,13 @@ impl FetchController {
         for (i, store) in stores.into_iter().enumerate() {
             println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
 
-            let items = fetcher.get_items(Some(store.id.as_str())).await?;
+            let items = match fetcher.get_items(Some(store.id.as_str())).await {
+                Ok(items) => items,
+                Err(e) => {
+                    eprintln!("[PakNSave] Error fetching store '{}': {} — skipping", store.name, e);
+                    continue;
+                }
+            };
 
             println!("[PakNSave] Fetched {} items for {}", items.len(), store.name);
 

@@ -157,9 +157,15 @@ impl<'a> Repository<'a> {
         let supermarket_name = item.supermarket.name();
 
         self.db.conn.execute(
-            "INSERT OR REPLACE INTO product_variants
+            "INSERT INTO product_variants
              (product_id, external_id, original_name, image_url, category_id, supermarket, fetch_stamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(external_id, supermarket) DO UPDATE SET
+                product_id = excluded.product_id,
+                original_name = excluded.original_name,
+                image_url = excluded.image_url,
+                category_id = excluded.category_id,
+                fetch_stamp = excluded.fetch_stamp",
             params![
                 product_id,
                 item.id,
@@ -425,8 +431,15 @@ impl<'a> Repository<'a> {
                 let embeddings = match generate_embeddings_batch(&texts) {
                     Ok(e) => e,
                     Err(e) => {
-                        eprintln!("Failed: {}", e);
-                        continue;
+                        eprintln!("batch failed ({}), falling back to individual embeddings...", e);
+                        let mut individual_embeddings = Vec::new();
+                        for text in &texts {
+                            match generate_embeddings_batch(&[text.clone()]) {
+                                Ok(mut emb) => individual_embeddings.push(emb.remove(0)),
+                                Err(_) => individual_embeddings.push(vec![]),
+                            }
+                        }
+                        individual_embeddings
                     }
                 };
 
@@ -434,6 +447,10 @@ impl<'a> Repository<'a> {
 
                 // Try semantic matching for each, or create new product
                 for ((key, item), embedding) in batch.iter().zip(embeddings.iter()) {
+                    if embedding.is_empty() {
+                        eprintln!("Warning: Skipping product '{}' — embedding generation failed", item.name);
+                        continue;
+                    }
                     let (size_value, size_unit) = item.size.to_normalized_value_and_unit();
                     let normalized_brand = normalize_brand(&item.brand_name);
 
