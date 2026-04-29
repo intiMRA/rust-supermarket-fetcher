@@ -24,6 +24,7 @@ pub struct PaginatedProduct {
 }
 
 #[derive(Debug, Serialize)]
+#[derive(Clone)]
 pub struct ProductByIdProduct {
     pub product_id: i32,
     pub product_name: String,
@@ -31,4 +32,15 @@ pub struct ProductByIdProduct {
     pub size_value: f64,
     pub size_unit: String,
     pub supermarket_info: Vec<SupermarketInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[derive(Clone)]
+pub struct BestListProduct {
+    pub product_id: i32,
+    pub product_name: String,
+    pub brand: String,
+    pub size_value: f64,
+    pub size_unit: String,
+    pub supermarket_info: SupermarketInfo,
 }

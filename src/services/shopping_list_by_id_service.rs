@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap};
+use std::option::Option;
 
 use crate::database::{Database, ProductWithPriceAndStore, Queries};
 use crate::services::common_models::list_commons::{SupermarketInfo};
 pub(crate) use crate::services::common_models::nearby_store::NearbyStore;
-use crate::services::common_models::response_product::ProductByIdProduct;
+use crate::services::common_models::response_product::{BestListProduct, ProductByIdProduct};
 use crate::services::utils::common_logic;
+use crate::utils::geo::haversine_distance_km;
+const PETROL_PRICE: f64 = 0.26;
 /// Request payload for shopping list processing.
 #[derive(Debug, Deserialize)]
 pub struct ShoppingListByIDRequest {
@@ -16,6 +19,11 @@ pub struct ShoppingListByIDRequest {
 #[derive(Debug, Serialize)]
 pub struct ShoppingListByIDResponse {
     items: Vec<ProductByIdProduct>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BestListResponse {
+    items: Vec<BestListProduct>,
 }
 
 /// Process a shopping list request using hybrid BM25 + semantic matching.
@@ -84,6 +92,8 @@ pub fn process_shopping_list_by_ids(
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
                     image_url: p.image_url.clone(),
+                    latitude: p.store_latitude,
+                    longitude: p.store_longitude,
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
@@ -112,4 +122,110 @@ pub fn process_shopping_list_by_ids(
         })
         .collect();
     ShoppingListByIDResponse { items: grouped_products }
+}
+
+pub fn find_best_list(
+    request: &ShoppingListByIDRequest,
+    db: &Database,
+) -> BestListResponse {
+    let id_response = process_shopping_list_by_ids(request, db);
+
+    let mut best_list = Vec::new();
+
+    let mut required_supermarkets = Vec::new();
+
+    let mut multi_supermarket_items = Vec::new();
+
+    for item in &id_response.items {
+        let mut cheapest_supermarket: Option<SupermarketInfo> = None;
+        for supermarket in &item.supermarket_info {
+            if cheapest_supermarket.is_none() || supermarket.price < cheapest_supermarket.as_ref().unwrap().price {
+                cheapest_supermarket = Some(supermarket.clone());
+            }
+        }
+        let best_item = BestListProduct {
+            product_id: item.clone().product_id,
+            product_name: item.clone().product_name,
+            brand: item.clone().brand,
+            size_unit: item.clone().size_unit,
+            size_value: item.clone().size_value,
+            supermarket_info: cheapest_supermarket.unwrap(),
+        };
+        if item.supermarket_info.len() == 1 {
+            best_list.push(best_item.clone());
+            if !required_supermarkets.iter().any(|s: &SupermarketInfo| s.store_name == item.supermarket_info[0].store_name) {
+                required_supermarkets.push(item.supermarket_info[0].clone());
+            }
+        }
+        else {
+            multi_supermarket_items.push(item.clone());
+        }
+    }
+    if best_list.len() == id_response.items.len() {
+        return BestListResponse {
+            items: best_list
+        }
+    }
+    let mut item_lists: Vec<Vec<BestListProduct>> = vec![vec![]];
+
+    for item in multi_supermarket_items {
+        let mut next_generation_of_lists = Vec::new();
+
+        for supermarket in &item.supermarket_info {
+            let best_item = BestListProduct {
+                product_id: item.product_id,
+                product_name: item.product_name.clone(),
+                brand: item.brand.clone(),
+                size_unit: item.size_unit.clone(),
+                size_value: item.size_value,
+                supermarket_info: supermarket.clone(),
+            };
+
+            for existing_list in &item_lists {
+                let mut new_list = existing_list.clone();
+                new_list.push(best_item.clone());
+                next_generation_of_lists.push(new_list);
+            }
+        }
+        item_lists = next_generation_of_lists;
+    }
+    let mut cheapest_list = None;
+    for item_list in item_lists {
+        if cheapest_list.is_none() {
+            cheapest_list = Some((item_list.clone(), f64::INFINITY));
+        }
+        let mut used_supermarkets = required_supermarkets.clone();
+        let mut price = 0.0;
+        for item in &item_list {
+            if !used_supermarkets.iter().any(|s: &SupermarketInfo| s.store_name == item.supermarket_info.store_name) {
+                let mut should_apply_petrol_fee = true;
+                for used_supermarket in &used_supermarkets {
+                    let distance = haversine_distance_km(
+                        used_supermarket.latitude,
+                        used_supermarket.longitude,
+                        item.supermarket_info.latitude,
+                        item.supermarket_info.longitude,
+                    );
+                    if distance <= 0.3 {
+                        should_apply_petrol_fee = false;
+                        break;
+                    }
+                }
+                if should_apply_petrol_fee {
+                    price += item.supermarket_info.distance_km * PETROL_PRICE;
+                }
+                used_supermarkets.push(item.supermarket_info.clone());
+        }
+            price += item.supermarket_info.price;
+        }
+        if price < cheapest_list.as_ref().unwrap().1 {
+            cheapest_list = Some((item_list.clone(), price));
+        }
+    }
+    for item in &cheapest_list.unwrap().0 {
+        best_list.push(item.clone());
+    }
+    BestListResponse {
+        items: best_list
+    }
 }

@@ -223,6 +223,8 @@ fn process_single_item(
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
                     image_url: p.image_url.clone(),
+                    latitude: p.store_latitude,
+                    longitude: p.store_longitude,
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
@@ -350,6 +352,8 @@ mod tests {
             distance_km: 2.5,
             price: 5.99,
             image_url: "https://picsum.pkns".to_string(),
+            latitude: 41.0,
+            longitude: 174.7633,
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -373,6 +377,8 @@ mod tests {
                     distance_km: 2.5,
                     price: 5.99,
                     image_url: "https://picsum.pkns".to_string(),
+                    latitude: 41.0,
+                    longitude: 174.7633,
                 },
                 SupermarketInfo {
                     supermarket: "NewWorld".to_string(),
@@ -380,6 +386,8 @@ mod tests {
                     distance_km: 3.1,
                     price: 6.29,
                     image_url: "https://picsum.pkns".to_string(),
+                    latitude: 41.0,
+                    longitude: 174.7633,
                 },
             ],
         };

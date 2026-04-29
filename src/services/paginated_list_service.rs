@@ -76,6 +76,8 @@ pub fn get_list_for_page(
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
                     image_url: p.image_url.clone(),
+                    latitude: p.store_latitude,
+                    longitude: p.store_longitude,
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
