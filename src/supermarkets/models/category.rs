@@ -65,6 +65,23 @@ pub fn top_level_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
     categories.into_iter().map(|c| vec![c.slug.clone()]).collect()
 }
 
+/// Returns category paths down to depth 1 (parent > child).
+/// If a top-level category has children, returns one path per child.
+/// If it has no children, returns just the top-level path.
+pub fn child_category_paths(categories: &[Category]) -> Vec<Vec<String>> {
+    let mut paths = Vec::new();
+    for cat in categories {
+        if cat.children.is_empty() {
+            paths.push(vec![cat.slug.clone()]);
+        } else {
+            for child in &cat.children {
+                paths.push(vec![cat.slug.clone(), child.slug.clone()]);
+            }
+        }
+    }
+    paths
+}
+
 pub fn find_trace(categories: &[Category], name: &str) -> Vec<String> {
     for category in categories {
         let trace = category.get_trace(name);

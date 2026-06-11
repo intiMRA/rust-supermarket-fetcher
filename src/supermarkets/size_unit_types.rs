@@ -144,7 +144,10 @@ impl SizeUnit {
 
         // 8. Word aliases
         match s {
-            "each" | "single" | "ea" | "pk" => return SizeUnit::Unit(1.0),
+            "each" | "single" | "ea" | "pk" | "pce"
+            | "sheets" | "sheet" | "serves" | "serve"
+            | "tablets" | "tablet" | "tabs" | "tab" | "caps" | "cap"
+            | "pair" | "cup" | "size" | "pellets" | "pellet" => return SizeUnit::Unit(1.0),
             _ => {}
         }
 
@@ -172,24 +175,29 @@ impl SizeUnit {
             return unit;
         }
 
-        // 13. "N+unit" pattern: "8+kg"
+        // 13. Compound dosage: "500/65mg" → take the whole as mg
+        if let Some(result) = Self::parse_compound_dosage(s) {
+            return result;
+        }
+
+        // 14. "N+unit" pattern: "8+kg"
         if let Some(result) = Self::parse_plus_unit(s) {
             return result;
         }
 
-        // 14. "Ns" pattern: "100s", "45s"
+        // 15. "Ns" pattern: "100s", "45s"
         if let Some(value_str) = s.strip_suffix('s') {
             if let Ok(v) = value_str.trim().parse::<f64>() {
                 return SizeUnit::Unit(v);
             }
         }
 
-        // 15. Standard suffixed units: "500g", "1kg", "500ml", etc.
+        // 16. Standard suffixed units: "500g", "1kg", "500ml", etc.
         if let Some(unit) = Self::parse_suffixed_unit(s) {
             return unit;
         }
 
-        // 16. Bare number (assume grams for weight context, or unit)
+        // 17. Bare number (assume grams for weight context, or unit)
         if let Ok(v) = s.parse::<f64>() {
             // Small numbers likely units, large numbers likely grams
             if v < 10.0 {
@@ -205,16 +213,27 @@ impl SizeUnit {
     }
 
     /// Parse "27l 20pack" → MultiPack(20, Liter(27))
+    /// Also handles reversed: "2pack 250g" → MultiPack(2, Kilogram(0.25))
     fn parse_unit_then_pack(s: &str) -> Option<SizeUnit> {
         let parts: Vec<&str> = s.split_whitespace().collect();
         if parts.len() == 2 {
-            let unit_part = parts[0];
-            let pack_part = parts[1];
+            let first = parts[0];
+            let second = parts[1];
 
-            // Check if second part ends with "pack"
-            if let Some(count_str) = pack_part.strip_suffix("pack") {
+            // "27l 20pack" — unit first, then Npack
+            if let Some(count_str) = second.strip_suffix("pack") {
                 if let Ok(count) = count_str.parse::<u32>() {
-                    let inner = Self::try_parse(unit_part, unit_part);
+                    let inner = Self::try_parse(first, first);
+                    if inner != SizeUnit::Unknown {
+                        return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
+                    }
+                }
+            }
+
+            // "2pack 250g" — Npack first, then unit
+            if let Some(count_str) = first.strip_suffix("pack") {
+                if let Ok(count) = count_str.parse::<u32>() {
+                    let inner = Self::try_parse(second, second);
                     if inner != SizeUnit::Unknown {
                         return Some(SizeUnit::MultiPack { count, unit: Box::new(inner) });
                     }
@@ -264,11 +283,12 @@ impl SizeUnit {
             return None;
         }
 
-        // Left side: could be "6", "8p", etc.
-        let count = if let Some(num_str) = left.strip_suffix("p") {
+        // Left side: could be "6", "8p", "18." (trailing dot typo), etc.
+        let left_clean = left.trim_end_matches('.');
+        let count = if let Some(num_str) = left_clean.strip_suffix("p") {
             num_str.parse::<u32>().ok()?
         } else {
-            left.parse::<u32>().ok()?
+            left_clean.parse::<u32>().ok()?
         };
 
         // Right side: parse the unit
@@ -300,12 +320,16 @@ impl SizeUnit {
         None
     }
 
-    /// Parse range format: "0.55-0.75kg", "1-2pcs"
+    /// Parse range format: "0.55-0.75kg", "1-2pcs", "580g - 800g", "0.8kg - 0.95kg"
+    /// Also handles range + piece count: "0.35-0.6kg 5-8pc"
     fn parse_range(s: &str) -> Option<SizeUnit> {
         // Must contain '-' but not start with it
         if !s.contains('-') || s.starts_with('-') {
             return None;
         }
+
+        // Strip trailing piece count suffix like " 5-8pc", " 12pcs", " 1-2pcs"
+        let s = Self::strip_piece_count_suffix(s);
 
         // Try each unit suffix
         let suffixes: &[(&str, fn(f64) -> SizeUnit)] = &[
@@ -324,20 +348,52 @@ impl SizeUnit {
 
         for (suffix, constructor) in suffixes {
             if let Some(range_str) = s.strip_suffix(suffix) {
-                if let Some((min_str, max_str)) = range_str.split_once('-') {
-                    let min_clean = min_str.strip_suffix(suffix).unwrap_or(min_str);
-                    if let (Ok(min), Ok(max)) = (min_clean.parse::<f64>(), max_str.parse::<f64>()) {
-                        return Some(SizeUnit::Range {
-                            min,
-                            max,
-                            unit: Box::new(constructor(1.0)),
-                        });
-                    }
+                // Split on " - " (with spaces) or "-" (without spaces)
+                let (min_str, max_str) = if let Some(pair) = range_str.split_once(" - ") {
+                    pair
+                } else if let Some(pair) = range_str.split_once('-') {
+                    pair
+                } else {
+                    continue;
+                };
+
+                // Strip unit suffix from min side too (handles "0.8kg - 0.95kg" → min="0.8kg")
+                let min_clean = min_str.trim();
+                let min_clean = min_clean.strip_suffix(suffix).unwrap_or(min_clean);
+                let max_clean = max_str.trim();
+                if let (Ok(min), Ok(max)) = (min_clean.parse::<f64>(), max_clean.parse::<f64>()) {
+                    return Some(SizeUnit::Range {
+                        min,
+                        max,
+                        unit: Box::new(constructor(1.0)),
+                    });
                 }
             }
         }
 
         None
+    }
+
+    /// Strip trailing piece count like " 5-8pc", " 12pcs", " 1-2pcs", " 2pcs"
+    fn strip_piece_count_suffix(s: &str) -> String {
+        // Match " Npc/pcs" or " N-Npc/pcs" at end
+        if let Some(space_pos) = s.rfind(' ') {
+            let suffix_part = &s[space_pos + 1..];
+            let is_piece_suffix = suffix_part.ends_with("pcs")
+                || suffix_part.ends_with("pc");
+            if is_piece_suffix {
+                // Verify what's before the pc/pcs suffix looks like a number or range
+                let num_part = suffix_part
+                    .strip_suffix("pcs")
+                    .or_else(|| suffix_part.strip_suffix("pc"))
+                    .unwrap_or("");
+                let looks_numeric = num_part.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.');
+                if looks_numeric && !num_part.is_empty() {
+                    return s[..space_pos].to_string();
+                }
+            }
+        }
+        s.to_string()
     }
 
     /// Parse "1kg pack", "2kg pack" → Kilogram
@@ -358,6 +414,29 @@ impl SizeUnit {
             if let Some(num_str) = s.strip_suffix(word) {
                 if let Ok(v) = num_str.trim().parse::<f64>() {
                     return Some(SizeUnit::Unit(v));
+                }
+            }
+        }
+        None
+    }
+
+    /// Parse compound dosage: "500/65mg" → Milligram(565)
+    fn parse_compound_dosage(s: &str) -> Option<SizeUnit> {
+        if !s.contains('/') {
+            return None;
+        }
+        let suffixes: &[(&str, fn(f64) -> SizeUnit)] = &[
+            ("kg", SizeUnit::Kilogram),
+            ("mg", SizeUnit::Milligram),
+            ("g", Self::kilogram_from_grams),
+            ("ml", Self::liter_from_ml),
+        ];
+        for (suffix, constructor) in suffixes {
+            if let Some(rest) = s.strip_suffix(suffix) {
+                if let Some((a_str, b_str)) = rest.split_once('/') {
+                    if let (Ok(a), Ok(b)) = (a_str.parse::<f64>(), b_str.parse::<f64>()) {
+                        return Some(constructor(a + b));
+                    }
                 }
             }
         }
@@ -633,8 +712,14 @@ mod tests {
 
     #[test]
     fn test_parse_cup_tray() {
-        // "12 cup tray" → Unit(12)
-        assert_eq!(SizeUnit::parse("12 cup tray"), SizeUnit::Unit(12.0));
+        // "12 cup tray" → MultiPack(12, Unit(1)) — "tray" stripped, "cup" is a bare unit
+        match SizeUnit::parse("12 cup tray") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 12);
+                assert_eq!(*unit, SizeUnit::Unit(1.0));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
     }
 
     #[test]
@@ -645,8 +730,14 @@ mod tests {
 
     #[test]
     fn test_parse_n_size() {
-        // "1 size" → Unit(1)
-        assert_eq!(SizeUnit::parse("1 size"), SizeUnit::Unit(1.0));
+        // "1 size" → MultiPack(1, Unit(1)) — "size" is now a bare unit word
+        match SizeUnit::parse("1 size") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 1);
+                assert_eq!(*unit, SizeUnit::Unit(1.0));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
     }
 
     #[test]
@@ -681,8 +772,14 @@ mod tests {
 
     #[test]
     fn test_parse_pellets() {
-        // "96 pellets" → Unit(96)
-        assert_eq!(SizeUnit::parse("96 pellets"), SizeUnit::Unit(96.0));
+        // "96 pellets" → MultiPack(96, Unit(1)) — "pellets" is now a bare unit word
+        match SizeUnit::parse("96 pellets") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 96);
+                assert_eq!(*unit, SizeUnit::Unit(1.0));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
     }
 
     #[test]
@@ -700,5 +797,146 @@ mod tests {
     fn test_same_product_normalizes_same() {
         assert_eq!(SizeUnit::parse("500g"), SizeUnit::parse("0.5kg"));
         assert_eq!(SizeUnit::parse("1000ml"), SizeUnit::parse("1l"));
+    }
+
+    #[test]
+    fn test_parse_range_with_spaces() {
+        // "580g - 800g" → Range in kg
+        match SizeUnit::parse("580g - 800g") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 580.0);
+                assert_eq!(max, 800.0);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+
+        // "0.5 - 0.7kg" → Range in kg
+        match SizeUnit::parse("0.5 - 0.7kg") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.5);
+                assert_eq!(max, 0.7);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+
+        // "2.5 - 3.5kg"
+        match SizeUnit::parse("2.5 - 3.5kg") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 2.5);
+                assert_eq!(max, 3.5);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_range_unit_both_sides() {
+        // "0.8kg - 0.95kg"
+        match SizeUnit::parse("0.8kg - 0.95kg") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.8);
+                assert_eq!(max, 0.95);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+
+        // "0.55kg - 0.7kg"
+        match SizeUnit::parse("0.55kg - 0.7kg") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.55);
+                assert_eq!(max, 0.7);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_range_with_piece_count() {
+        // "0.35-0.6kg 5-8pc" → Range in kg (piece count stripped)
+        match SizeUnit::parse("0.35-0.6kg 5-8pc") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.35);
+                assert_eq!(max, 0.6);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+
+        // "0.65-1.2kg 12pcs"
+        match SizeUnit::parse("0.65-1.2kg 12pcs") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.65);
+                assert_eq!(max, 1.2);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+
+        // "0.6-1.3kg 2pcs"
+        match SizeUnit::parse("0.6-1.3kg 2pcs") {
+            SizeUnit::Range { min, max, .. } => {
+                assert_eq!(min, 0.6);
+                assert_eq!(max, 1.3);
+            }
+            other => panic!("Expected Range, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_pack_then_unit() {
+        // "2pack 250g" → MultiPack(2, Kilogram(0.25))
+        match SizeUnit::parse("2pack 250g") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 2);
+                assert_eq!(*unit, SizeUnit::Kilogram(0.25));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+
+        // "24pack 330mL" → MultiPack(24, Liter(0.33))
+        match SizeUnit::parse("24pack 330mL") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 24);
+                assert_eq!(*unit, SizeUnit::Liter(0.33));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_bare_words() {
+        assert_eq!(SizeUnit::parse("sheets"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("serves"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("tablets"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("caps"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("tabs"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("pair"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("cup"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("size"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("pce"), SizeUnit::Unit(1.0));
+        assert_eq!(SizeUnit::parse("pellets"), SizeUnit::Unit(1.0));
+    }
+
+    #[test]
+    fn test_parse_compound_dosage() {
+        // "500/65mg" → Milligram(565)
+        assert_eq!(SizeUnit::parse("500/65mg"), SizeUnit::Milligram(565.0));
+    }
+
+    #[test]
+    fn test_parse_typo_multipack() {
+        // "18.x 85g" → MultiPack(18, Kilogram(0.085))
+        match SizeUnit::parse("18.x 85g") {
+            SizeUnit::MultiPack { count, unit } => {
+                assert_eq!(count, 18);
+                assert_eq!(*unit, SizeUnit::Kilogram(0.085));
+            }
+            other => panic!("Expected MultiPack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_hair_dye_colors_are_unknown() {
+        // Hair dye color codes are not valid size units
+        assert_eq!(SizeUnit::parse("500 Light brown"), SizeUnit::Unknown);
+        assert_eq!(SizeUnit::parse("darkest brown"), SizeUnit::Unknown);
     }
 }

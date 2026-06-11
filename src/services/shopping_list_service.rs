@@ -176,11 +176,6 @@ fn process_single_item(
                 + (semantic_score * SEMANTIC_WEIGHT)
                 + (price_score * PRICE_WEIGHT);
 
-            // Update store_name from store_map if available
-            if let Some(store_info) = store_map.get(&p.store_id) {
-                p.store_name = store_info.name.clone();
-            }
-
             p.similarity_score = hybrid_score;
             p
         })
@@ -212,19 +207,19 @@ fn process_single_item(
             // Collect store prices, deduplicated by store_id (keep cheapest per store)
             let mut store_prices: HashMap<String, SupermarketInfo> = HashMap::new();
             for p in group {
-                let distance_km = store_map
-                    .get(&p.store_id)
-                    .map(|s| s.distance_km)
-                    .unwrap_or(0.0);
+                let (distance_km, store_name, lat, lon) = match store_map.get(&p.store_id) {
+                    Some(s) => (s.distance_km, s.name.clone(), s.latitude, s.longitude),
+                    None => (0.0, p.store_name, p.store_latitude, p.store_longitude),
+                };
 
                 let info = SupermarketInfo {
                     supermarket: p.supermarket,
-                    store_name: p.store_name,
+                    store_name,
                     distance_km: (distance_km * 10.0).round() / 10.0,
                     price: p.price,
                     image_url: p.image_url.clone(),
-                    latitude: p.store_latitude,
-                    longitude: p.store_longitude,
+                    latitude: lat,
+                    longitude: lon,
                 };
 
                 // Only insert if this store hasn't been seen or has a lower price
