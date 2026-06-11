@@ -33,6 +33,15 @@ fn normalize_brand(brand: &str) -> String {
         .collect()
 }
 
+/// Clean up product names from supermarket APIs.
+///
+/// Strips leading non-alphanumeric prefixes like "& " that result from
+/// the API splitting brand from product name (e.g. "Cadbury & More..."
+/// becomes brand="cadbury", name="& More..." — we want "More...").
+fn clean_product_name(name: &str) -> String {
+    name.trim_start_matches(|c: char| !c.is_alphanumeric()).to_string()
+}
+
 /// Key for in-memory product deduplication.
 /// Products with the same key are considered the same product.
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
@@ -47,7 +56,7 @@ impl ProductKey {
     pub fn from_item(item: &SuperMarketItem) -> Self {
         let (size_value, size_unit) = item.size.to_normalized_value_and_unit();
         Self {
-            name: item.name.to_lowercase(),
+            name: clean_product_name(&item.name).to_lowercase(),
             brand: normalize_brand(&item.brand_name),
             size_value_cents: (size_value * 100.0).round() as i64,
             size_unit: size_unit.to_string(),
@@ -169,7 +178,7 @@ impl<'a> Repository<'a> {
             params![
                 product_id,
                 item.id,
-                item.name,
+                clean_product_name(&item.name),
                 item.image_url,
                 category_id,
                 supermarket_name,
@@ -307,10 +316,11 @@ impl<'a> Repository<'a> {
         let embedding_bytes = f32_vec_to_bytes(embedding);
         let normalized_brand = normalize_brand(&item.brand_name);
 
+        let cleaned_name = clean_product_name(&item.name);
         self.db.conn.execute(
             "INSERT INTO products (name, brand, size_value, size_unit, embedding)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![item.name, normalized_brand, size_value, size_unit, embedding_bytes],
+            params![cleaned_name, normalized_brand, size_value, size_unit, embedding_bytes],
         )?;
 
         let product_id = self.db.conn.last_insert_rowid();
@@ -318,7 +328,7 @@ impl<'a> Repository<'a> {
         // Sync to FTS index
         self.db.conn.execute(
             "INSERT OR REPLACE INTO products_fts (rowid, name, brand) VALUES (?1, ?2, ?3)",
-            params![product_id, item.name, item.brand_name],
+            params![product_id, cleaned_name, item.brand_name],
         )?;
 
         Ok(product_id)

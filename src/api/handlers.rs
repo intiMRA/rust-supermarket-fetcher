@@ -1,4 +1,5 @@
 use actix_web::{web, HttpResponse, Responder};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::database::Database;
@@ -9,6 +10,8 @@ use crate::services::{
 use crate::services::paginated_list_service::{get_list_for_page, PaginatedItemRequest};
 use crate::services::search_list_service::{perform_search, SearchListRequest};
 use crate::services::shopping_list_by_id_service::{find_best_list, process_shopping_list_by_ids, ShoppingListByIDRequest};
+use crate::supermarkets::woolworth_fetcher::fetch_woolworths_store_locations;
+use crate::utils::geo::haversine_distance_km;
 
 /// Application state shared across handlers.
 pub struct AppState {
@@ -76,4 +79,71 @@ pub async fn health() -> impl Responder {
         "status": "ok",
         "service": "SuperMarketChecker API"
     }))
+}
+
+// -----------------------------------------------------------------------------
+// Woolworths Store Locations
+// -----------------------------------------------------------------------------
+
+const MAX_DISTANCE_KM: f64 = 20.0;
+
+#[derive(Deserialize)]
+pub struct NearbyStoresQuery {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+#[derive(Serialize)]
+pub struct NearbyWoolworthsStore {
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub distance_km: f64,
+}
+
+/// Handler for GET /api/woolworths-stores?latitude=...&longitude=...
+///
+/// Returns Woolworths stores within 20km of the user's location.
+/// This is for showing proximity only — pricing is uniform across all stores.
+pub async fn woolworths_stores(
+    query: web::Query<NearbyStoresQuery>,
+) -> impl Responder {
+    let all_stores = match fetch_woolworths_store_locations().await {
+        Ok(stores) => stores,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch Woolworths stores: {}", e)
+            }));
+        }
+    };
+
+    let mut nearby: Vec<NearbyWoolworthsStore> = all_stores
+        .into_iter()
+        .filter_map(|store| {
+            let distance = haversine_distance_km(
+                query.latitude,
+                query.longitude,
+                store.latitude,
+                store.longitude,
+            );
+            if distance <= MAX_DISTANCE_KM {
+                Some(NearbyWoolworthsStore {
+                    id: store.id,
+                    name: store.name,
+                    address: store.address,
+                    latitude: store.latitude,
+                    longitude: store.longitude,
+                    distance_km: (distance * 100.0).round() / 100.0,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    nearby.sort_by(|a, b| a.distance_km.partial_cmp(&b.distance_km).unwrap());
+
+    HttpResponse::Ok().json(nearby)
 }

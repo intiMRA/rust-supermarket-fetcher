@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio::time::sleep;
 
 use crate::custom_types::error::FetchError;
-use crate::supermarkets::models::category::{Category, find_trace, top_level_category_paths};
+use crate::supermarkets::models::category::{Category, find_trace, child_category_paths};
 use crate::supermarkets::models::store::{Store, StoresResponse};
 use crate::supermarkets::models::super_market_item::SuperMarketItem;
 use crate::supermarkets::models::token::Token;
@@ -41,6 +41,10 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>PackNSaveFetcher<L, C> {
             logger,
             commons,
         }
+    }
+
+    pub fn set_store_context(&self, store_name: &str) {
+        self.logger.set_store_context(store_name);
     }
 }
 
@@ -296,7 +300,7 @@ impl <L: LoggerTrait, C: FoodStuffCommonsTrait>SuperMarketFetcherTrait for PackN
 
         let store_id = store_id.unwrap_or(DEFAULT_STORE_ID);
         let categories = self.get_categories(Some(store_id)).await?;
-        let category_paths = top_level_category_paths(&categories);
+        let category_paths = child_category_paths(&categories);
 
         self.logger.found(category_paths.len(), "categories to fetch");
 

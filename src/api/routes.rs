@@ -8,9 +8,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/api")
             .route("/shopping-list", web::post().to(handlers::shopping_list))
             .route("/shopping-list-by-ids", web::post().to(handlers::shopping_list_by_ids))
-            .route("/bet-list-by-ids", web::post().to(handlers::best_list_by_ids))
+            .route("/best-list-by-ids", web::post().to(handlers::best_list_by_ids))
             .route("/paginated-list", web::post().to(handlers::paginated_list))
             .route("/search", web::post().to(handlers::search))
-            .route("/health", web::get().to(handlers::health)),
+            .route("/health", web::get().to(handlers::health))
+            .route("/woolworths-stores", web::get().to(handlers::woolworths_stores)),
     );
 }

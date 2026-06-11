@@ -133,10 +133,11 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
 const REQUEST_DELAY_MS: u64 = 100;
 const MAX_RETRIES: u32 = 3;
 
+fn is_rate_limited(status: u16) -> bool {
+    matches!(status, 429 | 403 | 503)
+}
+
 impl<L: LoggerTrait> WoolworthFetcher<L> {
-    fn is_rate_limited(status: u16) -> bool {
-        matches!(status, 429 | 403 | 503)
-    }
 
     fn parse_breadcrumb_category(json: &Value) -> Category {
         let breadcrumb = &json["breadcrumb"];
@@ -206,7 +207,7 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
                 match result {
                     Ok(resp) => {
                         let status = resp.status().as_u16();
-                        if Self::is_rate_limited(status) {
+                        if is_rate_limited(status) {
                             self.logger.rate_limit_warning(status, &category_display);
                             retry_count += 1;
                             if retry_count >= MAX_RETRIES {
@@ -285,6 +286,80 @@ impl<L: LoggerTrait> WoolworthFetcher<L> {
         self.logger.fetched_category(items.len(), &category_display);
         Ok(items)
     }
+}
+
+// -----------------------------------------------------------------------------
+// Woolworths Store Locations (CDX API)
+// -----------------------------------------------------------------------------
+
+/// Fetch all Woolworths physical store locations from the CDX site-location API.
+///
+/// Uses curl as a subprocess because the CDX API (behind Akamai) blocks
+/// reqwest connections when concurrent requests are hitting woolworths.co.nz.
+pub async fn fetch_woolworths_store_locations() -> Result<Vec<Store>, FetchError> {
+    let url = "https://api.cdx.nz/site-location/api/v1/sites?latitude=-41.2924&longitude=174.7787&maxResults=10000";
+    println!("[Woolworths] Requesting store locations from CDX API...");
+
+    let output = tokio::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time", "30",
+            url,
+            "-H", "accept: application/json, text/plain, */*",
+            "-H", "accept-language: en-GB,en-US;q=0.9,en;q=0.8",
+            "-H", "origin: https://www.woolworths.co.nz",
+            "-H", "referer: https://www.woolworths.co.nz/",
+            "-H", "sec-ch-ua: \"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"",
+            "-H", "sec-ch-ua-mobile: ?0",
+            "-H", "sec-ch-ua-platform: \"macOS\"",
+            "-H", "sec-fetch-dest: empty",
+            "-H", "sec-fetch-mode: cors",
+            "-H", "sec-fetch-site: cross-site",
+            "-H", "user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        ])
+        .output()
+        .await
+        .map_err(|e| FetchError::UnexpectedResponse(format!("Failed to run curl: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(FetchError::UnexpectedResponse(format!("curl failed: {}", stderr)));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let json: Value = serde_json::from_str(&body)
+        .map_err(|e| FetchError::UnexpectedResponse(format!("Invalid JSON from CDX API: {}", e)))?;
+
+    let mut stores = Vec::new();
+    if let Some(site_details) = json["siteDetail"].as_array() {
+        for detail in site_details {
+            let site = &detail["site"];
+            if let (Some(id), Some(name), Some(lat), Some(lon)) = (
+                site["id"].as_i64(),
+                site["name"].as_str(),
+                site["latitude"].as_f64(),
+                site["longitude"].as_f64(),
+            ) {
+                let address_line = site["addressLine1"].as_str().unwrap_or("");
+                let suburb = site["suburb"].as_str().unwrap_or("");
+                let address = if suburb.is_empty() {
+                    address_line.to_string()
+                } else {
+                    format!("{}, {}", address_line, suburb)
+                };
+
+                stores.push(Store {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    address,
+                    latitude: lat,
+                    longitude: lon,
+                });
+            }
+        }
+    }
+
+    Ok(stores)
 }
 
 // -----------------------------------------------------------------------------

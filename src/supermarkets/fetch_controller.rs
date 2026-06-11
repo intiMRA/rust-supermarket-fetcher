@@ -5,7 +5,7 @@ use crate::database::repository::ItemWithStore;
 use crate::supermarkets::food_stuff::food_stuff_commons::FoodStuff;
 use crate::supermarkets::new_world_fetcher::NewWorldFetcher;
 use crate::supermarkets::pack_n_save_fetcher::PackNSaveFetcher;
-use crate::supermarkets::woolworth_fetcher::WoolworthFetcher;
+use crate::supermarkets::woolworth_fetcher::{WoolworthFetcher, fetch_woolworths_store_locations};
 use crate::supermarkets::super_market_fetcher_trait::SuperMarketFetcherTrait;
 use crate::loggers::logger::Logger;
 use crate::loggers::parse_logger::clear_parse_log;
@@ -18,6 +18,9 @@ pub struct FetchResult {
     pub supermarket: Supermarket,
     pub store: Store,
     pub items: Vec<SuperMarketItem>,
+    /// Physical store locations (for uniform-pricing supermarkets like Woolworths).
+    /// These are saved to the DB for distance filtering but have no per-store prices.
+    pub physical_stores: Vec<Store>,
 }
 
 pub struct FetchController;
@@ -104,6 +107,19 @@ impl FetchController {
         repo.insert_all_items(&items_with_stores, &fetch_stamp)
             .expect("Failed to insert items");
 
+        // Insert physical store locations (e.g. Woolworths stores for distance filtering)
+        for result in &all_results {
+            for store in &result.physical_stores {
+                if let Err(e) = repo.insert_store(store, result.supermarket) {
+                    eprintln!("Warning: Failed to insert physical store '{}': {}", store.name, e);
+                }
+            }
+        }
+        let physical_count: usize = all_results.iter().map(|r| r.physical_stores.len()).sum();
+        if physical_count > 0 {
+            println!("Inserted {} physical store locations", physical_count);
+        }
+
         // PHASE 4: Update valid fetch stamp and cleanup stale data
         println!("\n=== PHASE 4: Updating fetch stamp & cleaning stale data ===");
         repo.set_valid_fetch_stamp(&fetch_stamp)
@@ -124,6 +140,7 @@ impl FetchController {
 
     async fn fetch_woolworth() -> Result<Vec<FetchResult>, FetchError> {
         println!("[Woolworths] Fetching items...");
+        println!("[Woolworths] Fetching stores...");
 
         // Each task creates its own fetcher - no sharing, no mutex
         let mut fetcher = WoolworthFetcher::new(Logger::new("Woolworths"));
@@ -136,14 +153,31 @@ impl FetchController {
             longitude: 0.0,
         };
 
-        let items = fetcher.get_items(None).await?;
+        // Fetch items and physical store locations in parallel
+        let (items_result, stores_result) = tokio::join!(
+            fetcher.get_items(None),
+            fetch_woolworths_store_locations(),
+        );
 
+        let items = items_result?;
         println!("[Woolworths] Fetched {} items", items.len());
+
+        let physical_stores = match stores_result {
+            Ok(stores) => {
+                println!("[Woolworths] Fetched {} physical store locations", stores.len());
+                stores
+            }
+            Err(e) => {
+                eprintln!("[Woolworths] Warning: Failed to fetch store locations: {:?} — continuing without them", e);
+                Vec::new()
+            }
+        };
 
         Ok(vec![FetchResult {
             supermarket: Supermarket::Woolworth,
             store: woolworth_store,
             items,
+            physical_stores,
         }])
     }
 
@@ -159,22 +193,24 @@ impl FetchController {
         let mut results = Vec::new();
 
         for (i, store) in stores.into_iter().enumerate() {
-            println!("[NewWorld] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+            fetcher.set_store_context(&store.name);
+            println!("[NewWorld: {}] Fetching store {} of {}", store.name, i + 1, num_stores);
 
             let items = match fetcher.get_items(Some(store.id.as_str())).await {
                 Ok(items) => items,
                 Err(e) => {
-                    eprintln!("[NewWorld] Error fetching store '{}': {} — skipping", store.name, e);
+                    eprintln!("[NewWorld: {}] Error fetching store — {} — skipping", store.name, e);
                     continue;
                 }
             };
 
-            println!("[NewWorld] Fetched {} items for {}", items.len(), store.name);
+            println!("[NewWorld: {}] Fetched {} items", store.name, items.len());
 
             results.push(FetchResult {
                 supermarket: Supermarket::NewWorld,
                 store,
                 items,
+                physical_stores: Vec::new(),
             });
         }
 
@@ -193,22 +229,24 @@ impl FetchController {
         let mut results = Vec::new();
 
         for (i, store) in stores.into_iter().enumerate() {
-            println!("[PakNSave] Fetching store {} of {}: {}", i + 1, num_stores, store.name);
+            fetcher.set_store_context(&store.name);
+            println!("[PakNSave: {}] Fetching store {} of {}", store.name, i + 1, num_stores);
 
             let items = match fetcher.get_items(Some(store.id.as_str())).await {
                 Ok(items) => items,
                 Err(e) => {
-                    eprintln!("[PakNSave] Error fetching store '{}': {} — skipping", store.name, e);
+                    eprintln!("[PakNSave: {}] Error fetching store — {} — skipping", store.name, e);
                     continue;
                 }
             };
 
-            println!("[PakNSave] Fetched {} items for {}", items.len(), store.name);
+            println!("[PakNSave: {}] Fetched {} items", store.name, items.len());
 
             results.push(FetchResult {
                 supermarket: Supermarket::PakNSave,
                 store,
                 items,
+                physical_stores: Vec::new(),
             });
         }
 
